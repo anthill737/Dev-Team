@@ -1,0 +1,50 @@
+# Dev Team — local development / self-hosted deployment
+#
+# Usage:
+#   docker compose up
+#
+# Then open http://localhost:3000 in your browser.
+#
+# By default the frontend proxies API requests to the backend container.
+# The backend mounts the Docker socket so it can spawn sandbox containers for the Coder
+# agent (v2 — not used by the v1 architect interview).
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: devteam/backend:0.1.0
+    container_name: devteam-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DEVTEAM_LOG_LEVEL: INFO
+      DEVTEAM_PROJECTS_REGISTRY_PATH: /data/projects.json
+    volumes:
+      # Persist the project registry across restarts
+      - devteam-data:/data
+      # Allow the backend to spawn sandbox containers for the Coder (v2)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount the user's home so they can point projects at directories in their home dir.
+      # Users can override this in their own docker-compose.override.yml.
+      - ${HOME}:/host-home:rw
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: devteam/frontend:0.1.0
+    container_name: devteam-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # The frontend is served via vite; these are build/runtime flags.
+      VITE_BACKEND_URL: http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  devteam-data:

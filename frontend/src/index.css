@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Root font-size scales all rem-based Tailwind sizes.
+ * Current 19px is ~20% smaller than the earlier 24px, which was crowding UI elements.
+ * If you want it bigger, raise this value. If smaller, lower it. */
+html {
+  font-size: 19px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* Subtle scrollbars on dark panels */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2e35;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3f47;
+}
+
+/* Markdown content styling inside panels */
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+.prose-chat h1 {
+  font-size: 1.1rem;
+}
+.prose-chat h2 {
+  font-size: 1.05rem;
+}
+.prose-chat h3 {
+  font-size: 1rem;
+}
+.prose-chat p {
+  margin: 0.4rem 0;
+  line-height: 1.5;
+}
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.4rem 0 0.4rem 1.25rem;
+  line-height: 1.55;
+}
+.prose-chat li {
+  margin: 0.15rem 0;
+}
+.prose-chat code {
+  background: #1d2025;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.88em;
+}
+.prose-chat pre {
+  background: #0f1115;
+  border: 1px solid #1d2025;
+  padding: 0.6rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.prose-chat pre code {
+  background: transparent;
+  padding: 0;
+}
