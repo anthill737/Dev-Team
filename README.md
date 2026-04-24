@@ -13,7 +13,6 @@ This is a personal tool — local web app, bring-your-own Anthropic API key, no 
 5. **Review.** For tasks flagged `requires_review`, a skeptical Reviewer (Opus) verifies the Coder's work before it's marked done. Finds bugs, rejects with specific findings, sends back to Coder. Max 2 review cycles before blocking for you.
 6. **Iterate.** When a project completes, you can "Add more work" — the Architect interviews you about additions, appends a new phase to the plan, and the loop continues.
 
-Architecture inspiration: [Anthropic's harness design paper](https://www.anthropic.com/engineering/harness-design-long-running-apps) — separating generation from evaluation, skeptical evaluator, conditional review.
 
 ## Requirements
 
