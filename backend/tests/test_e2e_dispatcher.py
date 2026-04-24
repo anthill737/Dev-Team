@@ -375,6 +375,48 @@ def test_reject_plan_returns_to_interview() -> None:
         assert "simplify to 2 phases" in last["content"]
 
 
+def test_stream_architect_turn_empty_message_skips_append() -> None:
+    """Empty user_message must NOT duplicate the interview log.
+
+    This is how the rejection-recovery flow works: reject_plan seeds the user's
+    feedback as a user turn, then the WS / frontend fires stream_architect_turn
+    with empty message to trigger the Architect response. If we appended here,
+    the seeded feedback would appear twice in the log.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ProjectStore(tmp)
+        store.init(project_id="proj_e2e", name="Test")
+        meta = store.read_meta()
+        meta.status = ProjectStatus.INTERVIEW
+        store.write_meta(meta)
+
+        # Seed a user turn as reject_plan would have
+        asyncio.run(store.append_interview("user", "Please simplify to 2 phases."))
+        interview_before = store.read_interview()
+        assert len(interview_before) == 1
+
+        # Fire a turn with empty message. ScriptedRunner needs at least one
+        # scripted response so the turn completes.
+        runner = ScriptedRunner(
+            [{"text": "Revised plan coming up.", "tool_calls": []}]
+        )
+        orchestrator = Orchestrator(store=store, runner=runner)  # type: ignore[arg-type]
+
+        async def _drive() -> None:
+            async for _ev in orchestrator.stream_architect_turn(""):
+                pass
+
+        asyncio.run(_drive())
+
+        # The user turn should still appear exactly once — not duplicated
+        interview_after = store.read_interview()
+        user_turns = [e for e in interview_after if e.get("role") == "user"]
+        assert len(user_turns) == 1, (
+            f"Empty user_message should not duplicate seeded entry; got "
+            f"{len(user_turns)} user turns: {user_turns}"
+        )
+
+
 def test_cannot_approve_plan_from_wrong_state() -> None:
     """Approve should only work from AWAIT_APPROVAL."""
     with tempfile.TemporaryDirectory() as tmp:

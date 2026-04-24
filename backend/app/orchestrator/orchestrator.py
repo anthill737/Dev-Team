@@ -85,8 +85,11 @@ class Orchestrator:
             )
             return
 
-        # Log the user message into the interview transcript
-        await self.store.append_interview("user", user_message)
+        # Log the user message into the interview transcript. Empty string means
+        # "resume with whatever's already in the log" — used after reject_plan seeds
+        # the feedback directly, so appending here would duplicate it.
+        if user_message:
+            await self.store.append_interview("user", user_message)
 
         # Build message history from prior interview turns
         interview_log = self.store.read_interview()
@@ -97,6 +100,16 @@ class Orchestrator:
 
         tools = build_architect_tools(self.store)
 
+        # Incremental mode: if the project already has a plan and at least one
+        # completed phase, the Architect should treat this as add-work rather
+        # than a fresh interview. The prompt variant tells it to read plan.md,
+        # only interview about incremental work, and APPEND a new phase.
+        existing_plan = self.store.read_plan()
+        has_completed_phase = any(
+            p.status == "done" for p in self.store.read_meta().phases
+        )
+        incremental = bool(existing_plan.strip()) and has_completed_phase
+
         # Track final text so we can persist it after the stream completes
         collected_text: list[str] = []
         final_result = None
@@ -104,7 +117,7 @@ class Orchestrator:
         async for event in self.runner.stream(
             role="architect",
             model=self.settings.model_architect,
-            system_prompt=architect_prompt(),
+            system_prompt=architect_prompt(incremental=incremental),
             messages=messages,
             tools=tools,
             # 32k gives plenty of room for the biggest response the Architect emits
@@ -331,11 +344,20 @@ class Orchestrator:
             return
 
         coder = Coder(runner=self.runner, model=self.settings.model_coder)
+        # Reviewer is always constructed; ExecutionLoop only invokes it for tasks
+        # the Dispatcher flagged with requires_review=True. For tasks without the
+        # flag, the Reviewer is never called, so there's no cost penalty to having
+        # it instantiated.
+        from ..agents.reviewer import Reviewer
+
+        reviewer = Reviewer(runner=self.runner, model=self.settings.model_reviewer)
         loop = ExecutionLoop(
             store=self.store,
             sandbox=sandbox,
             runner=coder,
             coder_model=self.settings.model_coder,
+            reviewer=reviewer,
+            reviewer_model=self.settings.model_reviewer,
         )
 
         await self.store.append_decision(
@@ -353,6 +375,11 @@ class Orchestrator:
         """User approves the plan. Parse phases, transition to DISPATCHING.
 
         Returns the phase_id ready for dispatch (or None if plan has no parseable phases).
+
+        Incremental-mode aware: if the project has phases already completed (from
+        a prior add-work cycle or project_complete), their status is preserved.
+        Only the newly-appended phase(s) dispatch. If every phase parses as done,
+        we re-complete the project without re-running anything.
         """
         meta = self.store.read_meta()
         if meta.status != ProjectStatus.AWAIT_APPROVAL:
@@ -367,14 +394,46 @@ class Orchestrator:
             # Fall back: treat the whole plan as a single phase "P1"
             parsed = [type("_P", (), {"id": "P1", "title": "Implement MVP"})()]
 
-        meta.phases = [
-            ProjectPhase(id=p.id, title=p.title, status="pending", approved_by_user=False)
-            for p in parsed
-        ]
-        # First phase is auto-approved (user approved the whole plan); mark active.
-        meta.phases[0].approved_by_user = True
-        meta.phases[0].status = "active"
-        meta.current_phase = meta.phases[0].id
+        # Preserve status/approval of any previously-completed phases. This is
+        # what makes incremental (add-work) flow safe: P1 stays marked done and
+        # its tasks stay done; only the new phase(s) become active.
+        prior_by_id = {p.id: p for p in meta.phases}
+        new_phases: list[ProjectPhase] = []
+        for p in parsed:
+            prior = prior_by_id.get(p.id)
+            if prior and prior.status == "done":
+                # Keep done phases fully intact
+                new_phases.append(prior)
+            else:
+                new_phases.append(
+                    ProjectPhase(
+                        id=p.id, title=p.title, status="pending", approved_by_user=False
+                    )
+                )
+        meta.phases = new_phases
+
+        # Find the first non-done phase; that's the one the Dispatcher picks up.
+        # If every phase is already done (weird edge case — user approved an
+        # add-work plan that somehow didn't add anything), just re-mark complete.
+        first_pending = next(
+            (p for p in meta.phases if p.status != "done"), None
+        )
+        if first_pending is None:
+            meta.status = ProjectStatus.COMPLETE
+            meta.current_phase = None
+            self.store.write_meta(meta)
+            await self.store.append_decision(
+                {
+                    "actor": "user",
+                    "kind": "plan_approved_noop",
+                    "note": "Plan approved but all phases already complete — nothing to dispatch.",
+                }
+            )
+            return None
+
+        first_pending.approved_by_user = True
+        first_pending.status = "active"
+        meta.current_phase = first_pending.id
         meta.status = ProjectStatus.DISPATCHING
         self.store.write_meta(meta)
 

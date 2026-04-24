@@ -114,6 +114,12 @@ export async function resumeExecution(id: string): Promise<ProjectDetail> {
   });
 }
 
+export async function addWork(id: string): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/api/projects/${id}/add_work`, {
+    method: "POST",
+  });
+}
+
 export async function reviewTask(
   projectId: string,
   taskId: string,

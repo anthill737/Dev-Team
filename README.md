@@ -1,94 +1,101 @@
 # Dev Team
 
-An autonomous software development team powered by Claude. You describe what you want to build; a team of specialized agents — Architect, Dispatcher, Coder, Reviewer — interviews you, plans the project, and builds it.
+An autonomous software development harness powered by Claude. You describe what you want to build; a team of specialized agents interviews you, plans the project, and builds it. You review each phase and can send it back for changes.
 
-## How It Works
+This is a personal tool — local web app, bring-your-own Anthropic API key, no accounts, no cloud, no telemetry.
 
-1. **Interview.** The Architect, acting as a senior engineer, interviews you about the project. It asks questions, researches similar products, pushes back on risky choices, and drafts a plan and MVP specification.
-2. **Approval.** You review the plan. You approve, request changes, or redirect.
-3. **Build.** The dev team executes the plan phase by phase. The Dispatcher breaks phases into tasks. The Coder implements each task. The Reviewer audits the output against acceptance criteria. Tasks escalate back to the Architect when the plan turns out to be wrong.
-4. **Checkpoints.** You approve each phase transition. You can leave messages for the team at any time via an inbox the agents check between tasks.
+## How it works
 
-## What's Built (v1)
+1. **Interview.** The Architect (Opus) interviews you about what you want to build. Clarifying questions, pushback on risky choices, plan drafting.
+2. **Plan approval.** You see the generated plan. Approve or request changes with feedback — the Architect revises and comes back.
+3. **Dispatch.** The Dispatcher (Sonnet) decomposes each approved phase into concrete tasks with acceptance criteria. For each task it decides whether a skeptical Reviewer should verify the work.
+4. **Execute.** The Coder (Sonnet) works through tasks in dependency order — reads files, writes code, runs tests, iterates until acceptance criteria are met.
+5. **Review.** For tasks flagged `requires_review`, a skeptical Reviewer (Opus) verifies the Coder's work before it's marked done. Finds bugs, rejects with specific findings, sends back to Coder. Max 2 review cycles before blocking for you.
+6. **Iterate.** When a project completes, you can "Add more work" — the Architect interviews you about additions, appends a new phase to the plan, and the loop continues.
 
-- Web app you run locally (`docker compose up`)
-- Architect interview with web research and reflective practice protocol
-- Plan document generation, user approval flow
-- Dispatcher → Coder → Reviewer execution loop
-- Docker sandbox for safe code execution
-- Monaco-based embedded IDE for watching the work
-- Bring-your-own Anthropic API key
+Architecture inspiration: [Anthropic's harness design paper](https://www.anthropic.com/engineering/harness-design-long-running-apps) — separating generation from evaluation, skeptical evaluator, conditional review.
 
-## What's Coming Later
+## Requirements
 
-- Claude Code / Max subscription backend (v1.5)
-- Dynamic specialist agent spawning (v2)
-- Cloud execution for 24/7 autonomous operation (v2)
-- Native GitHub repo integration (v1.5)
+- Windows 10/11 (tested) — launcher scripts are PowerShell; adaptable to Unix but not yet done
+- Python 3.11+
+- Node.js 20+
+- An Anthropic API key (enter it in the app on first run; stored locally at `.devteam-run/api_key`)
 
 ## Setup
 
-Prerequisites: **Python 3.11+** and **Node.js 18+** (20 LTS recommended). Both have "install for this user only" options that don't need admin rights, which is ideal on work machines where Docker isn't available.
+First-time setup installs the backend venv and frontend dependencies:
 
-Plus an Anthropic API key from [console.anthropic.com](https://console.anthropic.com).
-
-**Windows — double-click to launch:**
-
-1. Extract the archive.
-2. Double-click **`Start Dev Team.bat`**.
-3. Wait for the terminal to say "Dev Team is running" (2-4 min first time while it installs dependencies, ~5 sec after).
-4. Your browser opens automatically at http://localhost:3939.
-
-To stop: double-click **`Stop Dev Team.bat`**.
-
-**Mac / Linux (manual):**
-
-```bash
-cd dev-team/backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-uvicorn app.main:app --host 127.0.0.1 --port 8000 &
-
-cd ../frontend
-npm install
-npm run dev
+```powershell
+cd Dev-Team
+.\scripts\setup.ps1
 ```
 
-Open http://localhost:3939.
+Then launch with:
 
-In either case: paste your Anthropic API key, pick a project directory, and start.
-
-### Skip the API key prompt (recommended)
-
-You can persist your API key so you aren't prompted every time you start the app. Two options:
-
-**Option A (easiest): drop it in a `.env` file.** Copy `.env.example` to `.env` in the project root, uncomment the `ANTHROPIC_API_KEY` line, and paste your key. The launcher loads this automatically. Since `.env` is in `.gitignore`, it won't be committed.
-
-**Option B: set a Windows user environment variable.**
-1. Win+R → `sysdm.cpl` → Advanced → Environment Variables
-2. Under "User variables", click New
-3. Variable name: `ANTHROPIC_API_KEY`, Variable value: your key
-4. Restart the Dev Team launcher
-
-Either way, on next startup you'll skip the key-entry screen and go straight to your projects.
-
-## Architecture
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
-See [docs/PROMPTS.md](docs/PROMPTS.md) for the system prompts, including the reflective practice protocol every agent follows.
-
-### Smoke tests (real API)
-
-`backend/smoke_dispatcher.py` drives the Dispatcher end-to-end against the real Anthropic API with a realistic fixture plan. Run it when you've changed prompts, tools, or anything that affects model behavior:
-
-```bash
-cd backend
-ANTHROPIC_API_KEY=sk-ant-... python smoke_dispatcher.py
+```powershell
+.\scripts\launch.ps1
 ```
 
-Typical run is 40-60 seconds and costs a few cents. A run that takes >3 minutes or hits max_tokens indicates a prompt problem. Unit tests can't catch this class of bug because scripted runners don't exercise the model.
+Two windows open: backend on port 8765, frontend on port 3939. Your browser opens to the frontend automatically. Close either window to stop it.
+
+On first launch, paste your Anthropic API key when prompted. Get one at console.anthropic.com.
+
+## What's in the repo
+
+```
+dev-team/
+├── backend/          FastAPI server, orchestrator, agents, sandbox
+│   ├── app/
+│   │   ├── agents/        Architect, Dispatcher, Coder, Reviewer
+│   │   ├── api/           HTTP routes + WebSocket endpoints
+│   │   ├── orchestrator/  Execution loop, scheduler, task runner
+│   │   ├── prompts/       System prompts for each agent
+│   │   ├── sandbox/       Process-based sandbox for executing code
+│   │   ├── state/         Per-project filesystem-backed state store
+│   │   └── tools/         Tool definitions each agent can call
+│   └── tests/             134 pytest tests
+├── frontend/         Vite + React + TypeScript + Tailwind
+│   ├── src/
+│   │   ├── components/    Main workspace, chat, task panels, live stream
+│   │   ├── hooks/         WebSocket stream hooks
+│   │   └── lib/           API client, types
+│   └── tests/             Vitest suite
+└── scripts/          Launch + setup PowerShell scripts
+```
+
+## Models used
+
+- **Architect / Reviewer:** `claude-opus-4-7` — judgment-heavy work
+- **Dispatcher / Coder:** `claude-sonnet-4-6` — execution-heavy work
+
+Configurable in `backend/app/config.py`.
+
+## Costs
+
+Prompt caching is enabled on all agent calls (system prompt + tool definitions cached with `cache_control: ephemeral`). A completed small project (Next.js to-do app, 9 tasks) ran around $11 without a Reviewer. With Reviewer enabled on user-facing tasks, expect 20-40% higher costs in exchange for actual verification of behavior instead of trusting self-reported test passes.
+
+Cost estimate is shown live in the workspace header. Hover for cache hit rate.
+
+## State and persistence
+
+Per-project state lives in `<project-path>/.devteam/`:
+
+- `meta.json` — project status, token usage, phase progression
+- `plan.md` — the Architect's plan
+- `tasks.json` — all tasks across all phases
+- `interview.jsonl` — Architect ↔ user chat history
+- `decisions.log` — audit trail of every agent decision, tool call, and outcome
+
+App-level state (project registry, API key) lives at `.devteam-run/` next to the backend. This is git-ignored.
+
+## Known limitations
+
+- Reviewer has been unit-tested but has limited real-world exposure. Behavior may surprise you; check `.devteam/decisions.log` for what it flagged.
+- Windows-only launcher scripts.
+- No cloud execution, no git integration, no multi-user.
+- Reviewer doesn't have browser automation (Playwright) yet — it verifies via filesystem reads and running commands, not by clicking through a UI.
 
 ## License
 
-TBD
+No license specified. Personal use.

@@ -24,7 +24,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from ..agents.api_runner import APIRunner
 from ..orchestrator import Orchestrator
-from ..state import ProjectStore
+from ..state import ProjectStatus, ProjectStore
 from .projects import _load_registry
 from .session import _store as _key_store
 
@@ -109,7 +109,49 @@ async def _run_agent_ws(websocket: WebSocket, project_id: str, *, agent: str) ->
 async def _architect_loop(
     websocket: WebSocket, orchestrator: Orchestrator, store: ProjectStore, project_id: str
 ) -> None:
-    """Multi-turn conversation loop — client sends user_message, server streams response."""
+    """Multi-turn conversation loop — client sends user_message, server streams response.
+
+    On connect, we check whether the interview log ends with an unanswered user
+    message. This happens after reject_plan seeds the user's feedback: the status
+    flips back to INTERVIEW, the feedback is appended as a user turn, but nothing
+    fires the Architect to respond. By detecting that state on WS connect and
+    driving a turn with empty user_message (which tells stream_architect_turn not
+    to re-append), we give the user an automatic Architect response the moment
+    they return to the project — no retyping needed.
+    """
+    # Resume-after-rejection: if the interview log's last entry is a user message
+    # with no subsequent assistant response, fire a turn now.
+    interview_log = store.read_interview()
+    needs_resume = (
+        len(interview_log) > 0
+        and interview_log[-1].get("role") == "user"
+        and store.read_meta().status == ProjectStatus.INTERVIEW
+    )
+    if needs_resume:
+        logger.info(
+            "Architect WS resuming with seeded user message for project %s", project_id
+        )
+        try:
+            async for event in orchestrator.stream_architect_turn(""):
+                out = _translate_event(event)
+                if out is not None:
+                    await _send(websocket, out)
+            meta = store.read_meta()
+            await _send(
+                websocket,
+                {
+                    "type": "turn_complete",
+                    "status": meta.status.value,
+                    "tokens_used": meta.tokens_used,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Seeded architect turn failed for project %s", project_id)
+            await _send(
+                websocket,
+                {"type": "error", "message": f"Architect turn failed: {exc}"},
+            )
+
     while True:
         raw = await websocket.receive_text()
         try:
@@ -127,9 +169,23 @@ async def _architect_loop(
             continue
 
         user_text = (message.get("text") or "").strip()
+        # Empty user_text is valid ONLY if the interview log already ends with an
+        # unanswered user turn (e.g. reject_plan seeded feedback). In that case the
+        # frontend sends an empty user_message as a "fire the turn" signal. Otherwise
+        # empty is a client error.
         if not user_text:
-            await _send(websocket, {"type": "error", "message": "Empty user message"})
-            continue
+            log = store.read_interview()
+            has_unanswered = (
+                len(log) > 0
+                and log[-1].get("role") == "user"
+                and store.read_meta().status == ProjectStatus.INTERVIEW
+            )
+            if not has_unanswered:
+                await _send(
+                    websocket,
+                    {"type": "error", "message": "Empty user message"},
+                )
+                continue
 
         try:
             async for event in orchestrator.stream_architect_turn(user_text):
@@ -261,6 +317,19 @@ def _translate_event(event: Any) -> dict[str, Any] | None:
             if outcome is not None and getattr(outcome, "kind", None) is not None
             else None,
             "summary": getattr(outcome, "summary", ""),
+        }
+    if kind == "review_outcome":
+        # Reviewer emits this at the end of its run. The result is a ReviewResult
+        # dataclass — serialize the wire-relevant fields. The Coder-facing effects
+        # (task reset to pending with notes, or marked done) happen in the
+        # execution loop, which emits its own review_approved / review_request_changes /
+        # task_blocked events. So this one is mostly informational for the live UI.
+        result = p.get("result")
+        return {
+            "type": "review_outcome",
+            "result_kind": getattr(result, "kind", None),
+            "summary": getattr(result, "summary", ""),
+            "findings": list(getattr(result, "findings", []) or []),
         }
     # Generic passthrough: everything remaining payload field is wire-safe already.
     return {"type": kind, **{k: v for k, v in p.items() if _jsonable(v)}}

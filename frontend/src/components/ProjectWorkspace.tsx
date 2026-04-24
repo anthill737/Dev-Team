@@ -8,6 +8,7 @@ import {
   getTasks,
   retryDispatcher,
   resumeExecution,
+  addWork,
 } from "../lib/api";
 import type { DecisionEntry, InterviewTurn, ProjectDetail, Task } from "../lib/types";
 import { useArchitectStream } from "../hooks/useArchitectStream";
@@ -35,6 +36,7 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [retryingDispatcher, setRetryingDispatcher] = useState(false);
   const [resumingExecution, setResumingExecution] = useState(false);
+  const [addingWork, setAddingWork] = useState(false);
 
   const refreshProjectData = useCallback(async () => {
     try {
@@ -133,6 +135,14 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
   const handleReject = async (feedback: string) => {
     await decidePlan(projectId, false, feedback);
     await refreshProjectData();
+    // reject_plan on the backend seeds the user's feedback into the interview log
+    // and flips status back to INTERVIEW, but doesn't run the Architect. Fire an
+    // empty user_message through the existing WS — the server detects the seeded
+    // message and drives the turn. Without this nudge, the user would have to
+    // retype their feedback to get a response.
+    if (wsStatus === "open") {
+      send("");
+    }
   };
 
   // The chat is "chattable" only in states where the Architect is the active listener.
@@ -249,6 +259,20 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
     }
   };
 
+  const handleAddWork = async () => {
+    setAddingWork(true);
+    try {
+      await addWork(projectId);
+      // Status flips to INTERVIEW; the Architect chat reopens with the
+      // incremental-mode prompt that appends a new phase rather than rewriting.
+      await refreshProjectData();
+    } catch (e) {
+      console.error("Add work failed", e);
+    } finally {
+      setAddingWork(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between px-4 py-2 border-b border-line bg-panel/50">
@@ -342,6 +366,8 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         retryingDispatcher={retryingDispatcher}
         onResumeExecution={!isDispatcherBlock && project?.status === "blocked" ? handleResumeExecution : undefined}
         resumingExecution={resumingExecution}
+        onAddWork={project?.status === "complete" ? handleAddWork : undefined}
+        addingWork={addingWork}
       />
 
       <div className="flex-1 grid grid-cols-[2fr_2fr_1fr] min-h-0 divide-x divide-line">

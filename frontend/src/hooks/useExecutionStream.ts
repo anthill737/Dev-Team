@@ -37,6 +37,9 @@ export interface ActivityEntry {
     | "deadlock"
     | "budget_exceeded"
     | "scheduler_decision"
+    | "review_start"
+    | "review_approved"
+    | "review_request_changes"
     | "error"
     | "info";
   text: string;
@@ -236,6 +239,42 @@ function reduce(s: ExecutionStreamState, msg: WsEvent): ExecutionStreamState {
         text: `Task ${msg.task_id} blocked: ${msg.reason}`,
         isError: true,
       });
+
+    case "review_start":
+      return appendActivity(
+        { ...s, currentActivity: `Reviewer checking ${msg.task_id}` },
+        {
+          at: now,
+          kind: "review_start",
+          text: `Reviewer verifying ${msg.task_id} (cycle ${msg.cycle}/${msg.max_cycles})`,
+        },
+      );
+
+    case "review_approved":
+      return appendActivity(
+        { ...s, currentActivity: null },
+        {
+          at: now,
+          kind: "review_approved",
+          text: `Reviewer approved ${msg.task_id}: ${msg.summary || "no summary"}`,
+        },
+      );
+
+    case "review_request_changes": {
+      const findings: string[] = Array.isArray(msg.findings) ? msg.findings : [];
+      const preview = findings.slice(0, 2).join("; ");
+      return appendActivity(
+        { ...s, currentActivity: null },
+        {
+          at: now,
+          kind: "review_request_changes",
+          text:
+            `Reviewer requested changes on ${msg.task_id} (cycle ${msg.cycle})` +
+            (preview ? `: ${preview}${findings.length > 2 ? "..." : ""}` : ""),
+          isError: true,
+        },
+      );
+    }
 
     case "task_needs_user_review":
       // Halt-the-phase handoff: the Coder is done with what it can verify; the

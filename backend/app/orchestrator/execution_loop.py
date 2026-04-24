@@ -13,6 +13,9 @@ runner (the Coder, eventually). On each turn of the loop we:
        - ESCALATE_TASK  → transition project to BLOCKED, note reason, hand to user
        - DEADLOCK       → transition project to BLOCKED, note reason, hand to user
   4. After task completion, check budgets; if exceeded, escalate to BLOCKED.
+  5. If task has requires_review=True AND Coder signaled APPROVED, run the Reviewer.
+     The Reviewer's verdict supersedes the Coder's — approve → task done; request_changes
+     → convert to NEEDS_REWORK back to Coder; max cycles exhausted → task blocked.
 
 The loop yields StreamEvents for live UI, same shape as the architect/dispatcher streams.
 """
@@ -23,6 +26,7 @@ import logging
 from typing import AsyncIterator
 
 from ..agents.base import StreamEvent
+from ..agents.reviewer import ReviewResult, Reviewer
 from ..sandbox import SandboxExecutor
 from ..state import ProjectStatus, ProjectStore
 from .scheduler import SchedulerDecisionKind, choose_next_action
@@ -35,6 +39,10 @@ logger = logging.getLogger(__name__)
 # task runner from looping forever even if nothing thinks the budget is exceeded.
 _MAX_LOOP_ITERATIONS = 100
 
+# Cap on how many times the Reviewer can send a task back to the Coder before it
+# gets blocked for user intervention. Paper recommendation & our judgment: 2.
+_MAX_REVIEW_CYCLES = 2
+
 
 class ExecutionLoop:
     """Drives execution of an approved phase."""
@@ -45,11 +53,18 @@ class ExecutionLoop:
         sandbox: SandboxExecutor,
         runner: TaskRunner,
         coder_model: str = "claude-sonnet-4-6",
+        reviewer: Reviewer | None = None,
+        reviewer_model: str = "claude-opus-4-7",
     ) -> None:
         self.store = store
         self.sandbox = sandbox
         self.runner = runner
         self._coder_model = coder_model
+        # Reviewer is optional so tests that don't exercise the review path can pass
+        # a scripted runner without needing to build a full Reviewer. Production
+        # creation always passes one via the factory in websocket.py.
+        self._reviewer = reviewer
+        self._reviewer_model = reviewer_model
 
     async def run(self) -> AsyncIterator[StreamEvent]:
         """Run the execution loop until a terminal state. Yields events for live UI."""
@@ -242,6 +257,147 @@ class ExecutionLoop:
 
                 # Apply the outcome to task state
                 if outcome.kind == TaskOutcomeKind.APPROVED:
+                    # Reviewer gate: if this task is flagged for review and a Reviewer
+                    # is configured, the Coder's APPROVED is provisional. Reviewer's
+                    # verdict supersedes. If the Reviewer rejects, we convert to rework
+                    # (subject to max review cycles). If the Reviewer isn't configured
+                    # or the flag is false, we accept Coder's signal as-is.
+                    review_result: ReviewResult | None = None
+                    should_review = bool(task.get("requires_review")) and self._reviewer is not None
+
+                    if should_review:
+                        review_cycles_so_far = int(task.get("review_cycles", 0))
+                        yield _event(
+                            "review_start",
+                            task_id=task["id"],
+                            cycle=review_cycles_so_far + 1,
+                            max_cycles=_MAX_REVIEW_CYCLES,
+                        )
+                        assert self._reviewer is not None  # narrowed by should_review
+                        async for rev_ev in self._reviewer.run(
+                            store=self.store,
+                            sandbox=self.sandbox,
+                            task={**task, "review_cycles": review_cycles_so_far},
+                        ):
+                            if rev_ev.kind == "review_outcome":
+                                review_result = rev_ev.payload.get("result")
+                            yield rev_ev
+
+                        # Bill the Reviewer's tokens to the reviewer model bucket
+                        if review_result is not None:
+                            self.store.add_token_usage(
+                                model=self._reviewer_model,
+                                tokens_input=review_result.tokens_input,
+                                tokens_output=review_result.tokens_output,
+                                cache_read=review_result.cache_read_tokens,
+                                cache_creation=review_result.cache_creation_tokens,
+                            )
+                            meta = self.store.read_meta()
+
+                        if review_result is None or review_result.kind == "error":
+                            # Reviewer crashed or timed out. Don't block on this —
+                            # trust the Coder's APPROVED and move on. The error is
+                            # logged; the user can always re-review manually later.
+                            reason = (
+                                review_result.error_reason
+                                if review_result
+                                else "Reviewer produced no result"
+                            )
+                            logger.warning(
+                                "Reviewer error for task %s: %s — accepting Coder's approved",
+                                task["id"],
+                                reason,
+                            )
+                            await self.store.append_decision(
+                                {
+                                    "actor": "orchestrator",
+                                    "kind": "review_error_passthrough",
+                                    "task_id": task["id"],
+                                    "reason": reason,
+                                }
+                            )
+                            # Fall through to the task-approved branch below
+                        elif review_result.kind == "approve":
+                            await self.store.append_decision(
+                                {
+                                    "actor": "reviewer",
+                                    "kind": "review_approved",
+                                    "task_id": task["id"],
+                                    "cycle": review_cycles_so_far + 1,
+                                    "summary": review_result.summary,
+                                }
+                            )
+                            yield _event(
+                                "review_approved",
+                                task_id=task["id"],
+                                summary=review_result.summary,
+                            )
+                            # Fall through to the task-approved branch below
+                        elif review_result.kind == "request_changes":
+                            new_cycle_count = review_cycles_so_far + 1
+                            await self.store.append_decision(
+                                {
+                                    "actor": "reviewer",
+                                    "kind": "review_request_changes",
+                                    "task_id": task["id"],
+                                    "cycle": new_cycle_count,
+                                    "summary": review_result.summary,
+                                    "findings": list(review_result.findings),
+                                }
+                            )
+
+                            if new_cycle_count >= _MAX_REVIEW_CYCLES:
+                                # Bounded: max cycles exhausted. Block for user.
+                                block_reason = (
+                                    f"Reviewer rejected after {new_cycle_count} "
+                                    f"cycle(s). Final findings: "
+                                    + "; ".join(review_result.findings[:3])
+                                )
+                                self.store.update_task(
+                                    task["id"],
+                                    {
+                                        "status": "blocked",
+                                        "review_cycles": new_cycle_count,
+                                        "review_findings": list(review_result.findings),
+                                        "review_summary": review_result.summary,
+                                    },
+                                )
+                                meta.status = ProjectStatus.BLOCKED
+                                self.store.write_meta(meta)
+                                yield _event(
+                                    "task_blocked",
+                                    task_id=task["id"],
+                                    reason=block_reason,
+                                )
+                                return
+                            else:
+                                # Still have cycles left — send back to Coder with findings.
+                                existing_notes = list(task.get("notes", []))
+                                findings_note = (
+                                    f"Reviewer (cycle {new_cycle_count}/"
+                                    f"{_MAX_REVIEW_CYCLES}) requested changes: "
+                                    f"{review_result.summary}\nFindings:\n"
+                                    + "\n".join(f"  - {f}" for f in review_result.findings)
+                                )
+                                existing_notes.append(findings_note)
+                                self.store.update_task(
+                                    task["id"],
+                                    {
+                                        "status": "pending",
+                                        "notes": existing_notes,
+                                        "review_cycles": new_cycle_count,
+                                    },
+                                )
+                                yield _event(
+                                    "review_request_changes",
+                                    task_id=task["id"],
+                                    cycle=new_cycle_count,
+                                    findings=list(review_result.findings),
+                                )
+                                self.store.write_meta(meta)
+                                continue
+
+                    # Task approved (either Coder alone, or Coder + Reviewer):
                     # Stamp the summary and completion time directly onto the task so
                     # the UI can render "Completed tasks" from tasks.json without
                     # joining against the decisions log (which is capped by pagination
@@ -263,6 +419,7 @@ class ExecutionLoop:
                             "kind": "task_approved",
                             "task_id": task["id"],
                             "summary": outcome.summary,
+                            "reviewed": bool(should_review and review_result and review_result.kind == "approve"),
                         }
                     )
                 elif outcome.kind == TaskOutcomeKind.NEEDS_USER_REVIEW:

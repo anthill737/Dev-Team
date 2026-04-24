@@ -236,7 +236,15 @@ async def get_decisions(
 async def decide_plan(
     project_id: str, body: PlanApprovalRequest, _api_key: str = Depends(get_api_key)
 ) -> ProjectDetail:
-    """User approves or rejects the plan. Rejection requires feedback for the architect."""
+    """User approves or rejects the plan. Rejection requires feedback for the architect.
+
+    On rejection, we append the user's feedback to the interview log and flip status
+    back to INTERVIEW. The Architect turn itself is fired by the WebSocket route at
+    /ws/architect/{id} — on connect, it detects an unanswered user message at the
+    end of the interview log and runs the turn. This way the turn's events stream
+    correctly to the user's WS (instead of a background task that has no subscriber),
+    and the seeded message persists if the user navigates away and returns later.
+    """
     from ..agents.api_runner import APIRunner
     from ..orchestrator import Orchestrator
 
@@ -339,6 +347,52 @@ async def resume_execution(
     store.write_meta(meta)
     await store.append_decision(
         {"actor": "user", "kind": "execution_resumed", "note": "Blocked tasks reset to pending."}
+    )
+    return _to_detail(store)
+
+
+@router.post("/{project_id}/add_work", response_model=ProjectDetail)
+async def add_work(
+    project_id: str, _api_key: str = Depends(get_api_key)
+) -> ProjectDetail:
+    """Reopen a completed project for additional work.
+
+    Transitions status from COMPLETE (or any other state the user might be in)
+    back to INTERVIEW. The existing plan.md, tasks.json, and completed phases
+    are preserved — the Architect is expected to read plan.md and append a new
+    phase rather than rewrite anything.
+
+    We intentionally ONLY allow this from COMPLETE and INTERVIEW (re-entry). From
+    an actively running project, this would collide with execution in flight.
+    """
+    store = _load_store(project_id)
+    meta = store.read_meta()
+
+    allowed = {ProjectStatus.COMPLETE, ProjectStatus.INTERVIEW}
+    if meta.status not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot add work: project is {meta.status.value}. "
+                f"Add-work requires project to be complete (or already in an "
+                f"add-work interview). Active projects should run to completion first."
+            ),
+        )
+
+    meta.status = ProjectStatus.INTERVIEW
+    # Clear current_phase so the Dispatcher picks up the newly-added phase after
+    # approval. Existing phases are preserved in meta.phases (they're already
+    # marked done, so approve_plan's phase parser will correctly identify the
+    # new one as the only pending phase).
+    meta.current_phase = None
+    store.write_meta(meta)
+
+    await store.append_decision(
+        {
+            "actor": "user",
+            "kind": "add_work_requested",
+            "note": "User reopened completed project to add additional work.",
+        }
     )
     return _to_detail(store)
 

@@ -1,29 +1,72 @@
-# Local run artifacts (created by Start Dev Team.bat)
+# # Test projects and any nested dev projects — NEVER commit these
+DEV-TEAM-TESTS/
+**/.devteam/
+**/node_modules/
+============================================================================
+# CRITICAL: .devteam-run/ contains your Anthropic API key.
+# Never remove this line from .gitignore. If you accidentally commit it,
+# rotate the key at console.anthropic.com immediately.
+# ============================================================================
 .devteam-run/
+
+# Local run artifacts (created by launch.ps1 / Start Dev Team.bat)
 backend/.venv/
+backend/venv/
 frontend/node_modules/
 frontend/dist/
+frontend/build/
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tox/
 *.egg-info/
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
 
 # Node
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 .npm/
+.yarn/
+.pnp.*
+.parcel-cache/
+.next/
+.turbo/
 
-# Environment overrides (user-specific, shouldn't be committed)
+# Environment overrides — often contain secrets
 .env
+.env.local
+.env.*.local
+.env.production
+.env.development
 
 # Editor / OS
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Logs and runtime output
+*.log
+logs/
+
+# Test / build output that leaks into repo
+coverage/
+.nyc_output/

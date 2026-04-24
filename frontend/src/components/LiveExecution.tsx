@@ -112,13 +112,15 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
   const time = new Date(entry.at).toLocaleTimeString();
   const colorClass = entry.isError
     ? "text-red-400"
-    : entry.kind === "task_outcome"
+    : entry.kind === "task_outcome" || entry.kind === "review_approved"
       ? "text-emerald-400"
       : entry.kind === "phase_complete" || entry.kind === "project_complete"
         ? "text-emerald-300 font-semibold"
         : entry.kind === "task_start"
           ? "text-blue-300"
-          : "text-gray-400";
+          : entry.kind === "review_start"
+            ? "text-amber-300"
+            : "text-gray-400";
 
   return (
     <div className="flex gap-2 items-baseline">

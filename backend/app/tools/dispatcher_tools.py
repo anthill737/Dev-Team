@@ -106,6 +106,16 @@ def _normalize_task(t: dict[str, Any], phase_id: str) -> dict[str, Any]:
         "iterations": t.get("iterations", 0),
         "budget_tokens": t.get("budget_tokens", 150_000),
         "notes": t.get("notes", []),
+        # Reviewer agent wiring. Dispatcher decides per task whether a skeptical
+        # Reviewer should verify the Coder's work. Default FALSE: existing projects
+        # and tasks that don't explicitly opt in behave as they did before.
+        # Dispatcher prompt instructs it to set True for user-facing UI, APIs that
+        # external systems depend on, DB-writing operations, and anything where
+        # "works" is observable only by running it. False for scaffolding, package
+        # installs, config, pure refactors.
+        "requires_review": bool(t.get("requires_review", False)),
+        # Count of times Reviewer has rejected this task. Bounded at max_review_cycles.
+        "review_cycles": int(t.get("review_cycles", 0)),
     }
 
 
@@ -321,8 +331,17 @@ def build_dispatcher_tools(store: ProjectStore, phase_id: str) -> list[ToolSpec]
                 "Commit a list of tasks for the current phase to tasks.json. Each task must "
                 "have: id (unique, e.g., 'P1-T1'), phase, title, description, "
                 "acceptance_criteria (array of concrete observable conditions), dependencies "
-                "(array of task ids). The system validates before writing and rejects malformed "
-                "input — if rejected, read the error and retry."
+                "(array of task ids). Optional but encouraged: requires_review (bool). The "
+                "system validates before writing and rejects malformed input — if rejected, "
+                "read the error and retry.\n\n"
+                "requires_review guidance: set to true for tasks where a skeptical Reviewer "
+                "agent should verify the Coder's work before marking done. Set true for: "
+                "user-facing UI, API endpoints, database-writing operations, authentication, "
+                "anything where 'it works' is only observable by actually running it. Set "
+                "false for: package installs, config files, pure scaffolding, simple refactors, "
+                "documentation. When uncertain, default to true for user-visible behavior. "
+                "The Reviewer costs extra tokens, so don't over-apply, but missing review on "
+                "a broken feature is worse than over-reviewing."
             ),
             input_schema={
                 "type": "object",
@@ -345,6 +364,15 @@ def build_dispatcher_tools(store: ProjectStore, phase_id: str) -> list[ToolSpec]
                                     "items": {"type": "string"},
                                 },
                                 "budget_tokens": {"type": "integer"},
+                                "requires_review": {
+                                    "type": "boolean",
+                                    "description": (
+                                        "If true, a skeptical Reviewer verifies the Coder's "
+                                        "work before the task is marked done. Set true for "
+                                        "user-facing behavior where 'works' is observable only "
+                                        "by running it."
+                                    ),
+                                },
                             },
                             "required": [
                                 "id",

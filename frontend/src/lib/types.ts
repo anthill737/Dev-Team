@@ -81,6 +81,14 @@ export interface Task {
   review_run_command?: string;
   review_files_to_check?: string[];
   review_requested_at?: number;
+  // Reviewer agent (distinct from user-review above). When Dispatcher flags a
+  // task with requires_review, a skeptical Reviewer runs after the Coder signals
+  // done. review_cycles counts how many times the Reviewer has rejected. If the
+  // Reviewer rejects at max cycles, the task is blocked and review_findings
+  // carries the specific issues the user needs to resolve.
+  requires_review?: boolean;
+  review_cycles?: number;
+  review_findings?: string[];
 }
 
 export interface InterviewTurn {
@@ -131,4 +139,24 @@ export type WsEvent =
   | { type: "budget_exceeded"; task_id: string; budget: number }
   | { type: "loop_paused"; reason: string }
   | { type: "loop_exit"; reason: string }
-  | { type: "loop_safety_halt" };
+  | { type: "loop_safety_halt" }
+  // --- Reviewer gate events (emitted when a task is flagged requires_review)
+  | {
+      type: "review_start";
+      task_id: string;
+      cycle: number;
+      max_cycles: number;
+    }
+  | { type: "review_approved"; task_id: string; summary: string }
+  | {
+      type: "review_request_changes";
+      task_id: string;
+      cycle: number;
+      findings: string[];
+    }
+  | {
+      type: "review_outcome";
+      result_kind: "approve" | "request_changes" | "error" | null;
+      summary: string;
+      findings: string[];
+    };

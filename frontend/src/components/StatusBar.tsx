@@ -30,6 +30,11 @@ interface Props {
    *  kicks the execution loop back on. */
   onResumeExecution?: () => void;
   resumingExecution?: boolean;
+  /** When project is complete, parent provides a callback that flips the project
+   *  back to interview so the user can request additional work. Appears as an
+   *  "Add more work" button in the status bar. */
+  onAddWork?: () => void;
+  addingWork?: boolean;
 }
 
 type StatusMode = "active" | "waiting" | "idle" | "error";
@@ -49,6 +54,8 @@ export function StatusBar({
   retryingDispatcher,
   onResumeExecution,
   resumingExecution,
+  onAddWork,
+  addingWork,
 }: Props) {
   const s = computeStatus(project, agentStreaming, agentCurrentActivity, blockedReason);
 
@@ -89,6 +96,17 @@ export function StatusBar({
           title="Reset blocked tasks to pending and resume the execution loop."
         >
           {resumingExecution ? "Resuming..." : "Resume execution"}
+        </button>
+      )}
+      {project?.status === "complete" && onAddWork && (
+        <button
+          type="button"
+          onClick={onAddWork}
+          disabled={addingWork}
+          className="shrink-0 px-3 py-1 text-xs font-medium bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded"
+          title="Reopen this project to add a new feature, fix, or refactor. The Architect will interview you about the incremental work and append a new phase to the plan."
+        >
+          {addingWork ? "Opening..." : "Add more work"}
         </button>
       )}
     </div>

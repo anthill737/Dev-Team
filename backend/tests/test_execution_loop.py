@@ -541,3 +541,291 @@ def test_loop_transitions_dispatching_to_executing_on_first_iteration() -> None:
         final_meta = store.read_meta()
         assert final_meta.status == ProjectStatus.COMPLETE
         assert len(runner.contexts_received) == 1
+
+
+# ---- Reviewer gate -----------------------------------------------------------------------
+
+# The Reviewer runs AFTER the Coder signals APPROVED, if the task is flagged with
+# requires_review=True. These tests use a ScriptedReviewer to simulate verdicts
+# without calling the real Opus agent.
+
+
+class ScriptedReviewer:
+    """Plays a scripted list of ReviewResults, one per call to run().
+
+    Matches the real Reviewer's contract: async iterator yielding StreamEvents,
+    emits exactly one `review_outcome` event carrying the result.
+    """
+
+    def __init__(self, results: list) -> None:
+        # `list` is ReviewResult but we avoid the import in the signature so
+        # tests that don't use the Reviewer don't need to import it.
+        self._results = list(results)
+        self.calls = 0
+
+    async def run(self, *, store, sandbox, task) -> AsyncIterator[StreamEvent]:
+        self.calls += 1
+        if not self._results:
+            raise RuntimeError(
+                "ScriptedReviewer ran out of results — test script too short"
+            )
+        result = self._results.pop(0)
+        # Swallow any scripted exception to match real error-path behavior:
+        # if the result is an Exception instance, raise it (simulates crash).
+        if isinstance(result, Exception):
+            raise result
+        yield StreamEvent(kind="review_outcome", payload={"result": result})
+
+
+def _review_task(task_id: str, **kwargs) -> dict[str, Any]:
+    """Task factory that defaults to requires_review=True."""
+    t = make_task(task_id, **kwargs)
+    t["requires_review"] = True
+    t["review_cycles"] = 0
+    return t
+
+
+def test_loop_skips_reviewer_when_requires_review_false() -> None:
+    """If a task isn't flagged for review, the Reviewer must not run even if one
+    is configured. This is the default path — existing projects and tasks not
+    marked requires_review are unaffected by the new wiring."""
+    from app.agents.reviewer import ReviewResult
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(tmp, [make_task("P1-T1")])  # no requires_review
+        sandbox = ProcessSandboxExecutor(tmp)
+        runner = ScriptedTaskRunner(
+            [TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="done")]
+        )
+        # Reviewer with a result that would blow up if consumed — proves it's not called
+        reviewer = ScriptedReviewer(
+            [ReviewResult(kind="request_changes", findings=["should not run"])]
+        )
+        loop = ExecutionLoop(
+            store=store,
+            sandbox=sandbox,
+            runner=runner,
+            reviewer=reviewer,
+        )
+        collect_events(loop.run())
+
+        assert reviewer.calls == 0, "Reviewer must not run when requires_review=False"
+        final_tasks = store.read_tasks()
+        assert final_tasks[0]["status"] == "done"
+
+
+def test_loop_runs_reviewer_and_approves_task_on_approve() -> None:
+    """Happy path for review: Coder signals approved, Reviewer approves,
+    task is marked done."""
+    from app.agents.reviewer import ReviewResult
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(tmp, [_review_task("P1-T1")])
+        sandbox = ProcessSandboxExecutor(tmp)
+        runner = ScriptedTaskRunner(
+            [TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="coder done")]
+        )
+        reviewer = ScriptedReviewer(
+            [
+                ReviewResult(
+                    kind="approve",
+                    summary="Verified endpoint returns 201",
+                    tokens_input=500,
+                    tokens_output=100,
+                )
+            ]
+        )
+        loop = ExecutionLoop(
+            store=store,
+            sandbox=sandbox,
+            runner=runner,
+            reviewer=reviewer,
+        )
+        events = collect_events(loop.run())
+
+        assert reviewer.calls == 1
+        # Should see review_start and review_approved events in the stream
+        kinds = [e.kind for e in events]
+        assert "review_start" in kinds
+        assert "review_approved" in kinds
+
+        final_tasks = store.read_tasks()
+        assert final_tasks[0]["status"] == "done"
+
+
+def test_loop_reviewer_request_changes_sends_task_back_with_findings() -> None:
+    """When the Reviewer rejects with findings and cycles remain, the task goes
+    back to pending with the findings appended to notes. The review_cycles
+    counter increments so the next review pass sees what was flagged."""
+    from app.agents.reviewer import ReviewResult
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(tmp, [_review_task("P1-T1")])
+        sandbox = ProcessSandboxExecutor(tmp)
+        # Coder approves twice — first round Reviewer rejects, second round approves.
+        runner = ScriptedTaskRunner(
+            [
+                TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="first try"),
+                TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="second try"),
+            ]
+        )
+        reviewer = ScriptedReviewer(
+            [
+                ReviewResult(
+                    kind="request_changes",
+                    summary="Tests mock the DB",
+                    findings=[
+                        "test_save_note.ts mocks the sqlite client",
+                        "criterion 'writes to DB' not verified",
+                    ],
+                ),
+                ReviewResult(kind="approve", summary="fixed in round 2"),
+            ]
+        )
+        loop = ExecutionLoop(
+            store=store,
+            sandbox=sandbox,
+            runner=runner,
+            reviewer=reviewer,
+        )
+        events = collect_events(loop.run())
+
+        # Reviewer ran twice (reject, then approve)
+        assert reviewer.calls == 2
+        # Coder ran twice (initial, then rework)
+        assert len(runner.contexts_received) == 2
+
+        kinds = [e.kind for e in events]
+        assert "review_request_changes" in kinds
+        assert "review_approved" in kinds
+
+        final_tasks = store.read_tasks()
+        t = final_tasks[0]
+        assert t["status"] == "done"
+        assert t["review_cycles"] == 1, (
+            f"Expected 1 cycle after one rejection+approval, got {t['review_cycles']}"
+        )
+        # The findings must be in notes so the Coder saw them on retry
+        notes_blob = "\n".join(t.get("notes", []))
+        assert "mocks the sqlite client" in notes_blob
+        assert "Reviewer" in notes_blob
+
+
+def test_loop_reviewer_request_changes_at_max_cycles_blocks_task() -> None:
+    """If the Reviewer rejects enough times to hit max cycles, the task is
+    blocked — not looped forever. The user sees the findings and can intervene."""
+    from app.agents.reviewer import ReviewResult
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(tmp, [_review_task("P1-T1")])
+        sandbox = ProcessSandboxExecutor(tmp)
+        # Coder approves twice, Reviewer rejects twice — second rejection hits
+        # max cycles (2) and blocks.
+        runner = ScriptedTaskRunner(
+            [
+                TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="try 1"),
+                TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="try 2"),
+            ]
+        )
+        reviewer = ScriptedReviewer(
+            [
+                ReviewResult(
+                    kind="request_changes",
+                    summary="round 1: missing X",
+                    findings=["criterion X not met"],
+                ),
+                ReviewResult(
+                    kind="request_changes",
+                    summary="round 2: still missing X",
+                    findings=["criterion X still not met"],
+                ),
+            ]
+        )
+        loop = ExecutionLoop(
+            store=store,
+            sandbox=sandbox,
+            runner=runner,
+            reviewer=reviewer,
+        )
+        events = collect_events(loop.run())
+
+        final_meta = store.read_meta()
+        assert final_meta.status == ProjectStatus.BLOCKED
+
+        final_tasks = store.read_tasks()
+        t = final_tasks[0]
+        assert t["status"] == "blocked"
+        assert t["review_cycles"] == 2
+        # review_findings field populated for UI
+        assert "criterion X still not met" in t.get("review_findings", [])
+
+
+def test_loop_reviewer_error_passes_through_coder_approved() -> None:
+    """If the Reviewer crashes or times out, we trust the Coder's APPROVED and
+    move on rather than blocking the whole project on review infrastructure.
+    The error is logged; user can re-review manually if they want."""
+    from app.agents.reviewer import ReviewResult
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(tmp, [_review_task("P1-T1")])
+        sandbox = ProcessSandboxExecutor(tmp)
+        runner = ScriptedTaskRunner(
+            [TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="coder done")]
+        )
+        # Reviewer returns kind="error" — simulates timeout or crash converted
+        # to a ReviewResult.
+        reviewer = ScriptedReviewer(
+            [
+                ReviewResult(
+                    kind="error",
+                    error_reason="Reviewer timed out after 360s",
+                )
+            ]
+        )
+        loop = ExecutionLoop(
+            store=store,
+            sandbox=sandbox,
+            runner=runner,
+            reviewer=reviewer,
+        )
+        collect_events(loop.run())
+
+        # Task should still be marked done — don't block user on reviewer failure
+        final_tasks = store.read_tasks()
+        assert final_tasks[0]["status"] == "done"
+
+
+def test_dispatcher_normalize_preserves_requires_review_and_cycles() -> None:
+    """Regression: the Dispatcher's _normalize_task must preserve requires_review
+    and review_cycles fields so the Reviewer wiring works end-to-end. If these
+    get stripped during normalization, the execution loop won't know to review.
+    """
+    from app.tools.dispatcher_tools import _normalize_task
+
+    # With flag set True
+    raw = {
+        "id": "P1-T1",
+        "phase": "P1",
+        "title": "t",
+        "description": "d",
+        "acceptance_criteria": ["a"],
+        "dependencies": [],
+        "requires_review": True,
+    }
+    norm = _normalize_task(raw, "P1")
+    assert norm["requires_review"] is True
+    assert norm["review_cycles"] == 0
+
+    # With flag omitted — must default to False for backward compat
+    raw2 = {
+        "id": "P1-T2",
+        "phase": "P1",
+        "title": "t",
+        "description": "d",
+        "acceptance_criteria": ["a"],
+        "dependencies": [],
+    }
+    norm2 = _normalize_task(raw2, "P1")
+    assert norm2["requires_review"] is False
+    assert norm2["review_cycles"] == 0
+
