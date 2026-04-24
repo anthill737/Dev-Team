@@ -76,6 +76,14 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": "0.1.0"}
 
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        """Cancel all background execution jobs cleanly. The orchestrator's
+        abandoned-in_progress recovery handles the state on next startup."""
+        from .orchestrator.job_registry import get_registry
+
+        await get_registry().shutdown()
+
     logger.info("Dev Team backend initialized (log_level=%s)", settings.log_level)
     return app
 

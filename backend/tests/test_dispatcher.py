@@ -200,6 +200,8 @@ def test_dispatcher_write_tasks_detects_collision() -> None:
 
 
 def test_dispatcher_mark_complete_requires_tasks_first() -> None:
+    """Hard guard: without a successful write_tasks this invocation, the tool
+    must refuse. Prevents the 'Dispatcher gives up and fake-completes' bug."""
     with tempfile.TemporaryDirectory() as tmp:
         store = ProjectStore(tmp)
         store.init(project_id="proj_test", name="Test")
@@ -208,24 +210,74 @@ def test_dispatcher_mark_complete_requires_tasks_first() -> None:
 
         result = asyncio.run(mark_tool.executor({"summary": "done"}))
         assert result.is_error
-        assert "no tasks" in result.content.lower()
+        # The new guard message references write_tasks; also check id format hint
+        assert "write_tasks" in result.content.lower()
 
 
-def test_dispatcher_mark_complete_transitions_state() -> None:
+def test_dispatcher_mark_complete_refuses_after_failed_write() -> None:
+    """The exact bug this change fixes: Dispatcher attempts write_tasks with
+    colliding ids (from a prior phase), gets rejected, then tries to fake-
+    complete the phase. The invocation-level flag must NOT be set by a failed
+    write, so mark_dispatch_complete still refuses. This is the regression test
+    for the NOTES-APP add-work failure.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         store = ProjectStore(tmp)
         store.init(project_id="proj_test", name="Test")
-        # Set up DISPATCHING state
+        # Seed an existing P1 task from a completed phase (simulates add-work)
+        store.write_tasks(
+            [_good_task("P1-T1") | {"status": "done", "phase": "P1"}]
+        )
+
+        # Dispatcher is now working on P3 (incremental add-work)
+        tools = build_dispatcher_tools(store, phase_id="P3")
+        write_tool = next(t for t in tools if t.name == "write_tasks")
+        mark_tool = next(t for t in tools if t.name == "mark_dispatch_complete")
+
+        # Dispatcher makes the original bug: writes with P1 ids → collision
+        bad_write = asyncio.run(
+            write_tool.executor({"tasks": [_good_task("P1-T1")]})
+        )
+        assert bad_write.is_error
+        assert "collision" in bad_write.content.lower()
+
+        # Dispatcher then tries to give up and mark complete. This must fail
+        # — the flag was NOT set because write_tasks did not succeed.
+        result = asyncio.run(mark_tool.executor({"summary": "giving up"}))
+        assert result.is_error, (
+            "mark_dispatch_complete must refuse after a failed write_tasks — "
+            "this is the regression that caused the NOTES-APP add-work bug."
+        )
+        # Project status must still be DISPATCHING, not EXECUTING — the
+        # dispatcher's failure must not transition the project forward.
+        final_meta = store.read_meta()
+        assert final_meta.status != ProjectStatus.EXECUTING
+
+
+def test_dispatcher_mark_complete_transitions_state() -> None:
+    """Happy path: write_tasks succeeds via the tool, then mark_dispatch_complete
+    flips the project to EXECUTING. Uses the write_tasks executor (not direct
+    store.write_tasks) because the guard is invocation-scoped and only the tool
+    sets the flag."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ProjectStore(tmp)
+        store.init(project_id="proj_test", name="Test")
         meta = store.read_meta()
         meta.status = ProjectStatus.DISPATCHING
         store.write_meta(meta)
 
-        store.write_tasks([_good_task("P1-T1") | {"status": "pending", "phase": "P1"}])
-
         tools = build_dispatcher_tools(store, phase_id="P1")
+        write_tool = next(t for t in tools if t.name == "write_tasks")
         mark_tool = next(t for t in tools if t.name == "mark_dispatch_complete")
-        result = asyncio.run(mark_tool.executor({"summary": "P1 decomposed into 1 task"}))
 
+        # Call write_tasks through the tool so the invocation flag is set.
+        # This mirrors the real Dispatcher flow.
+        write_result = asyncio.run(
+            write_tool.executor({"tasks": [_good_task("P1-T1")]})
+        )
+        assert not write_result.is_error
+
+        result = asyncio.run(mark_tool.executor({"summary": "P1 decomposed"}))
         assert not result.is_error
         final_meta = store.read_meta()
         assert final_meta.status == ProjectStatus.EXECUTING

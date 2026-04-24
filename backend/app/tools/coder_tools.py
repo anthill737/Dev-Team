@@ -86,17 +86,45 @@ def build_coder_tools(
     async def read_task_exec(_args: dict[str, Any]) -> ToolResult:
         import json as _json
 
-        iteration = task.get("iterations", 1)
+        # Re-read from disk each call rather than using the captured `task`.
+        # This is essential for mid-task user edits: if the user adds a note or
+        # bumps the budget via the UI while we're running, we want the NEXT
+        # read_task call to surface it. The closure-captured `task` is a
+        # snapshot from task start, so it won't reflect PATCHes.
+        all_tasks = store.read_tasks()
+        fresh = next((t for t in all_tasks if t["id"] == task["id"]), None)
+        if fresh is None:
+            # Extremely unlikely, but don't crash — fall back to the snapshot.
+            fresh = task
+
+        iteration = fresh.get("iterations", 1)
+        all_notes = fresh.get("notes", [])
+
+        # Split user notes out of the general notes list so the Coder can't
+        # accidentally treat them as historical bookkeeping. Any note that
+        # starts with "User note:" was inserted by the user via the UI's gear
+        # edit; the rest come from the Coder's own iteration history.
+        # The prompt instructs the Coder to treat user_notes as BINDING
+        # instructions on par with acceptance criteria — not commentary to
+        # skim past.
+        user_notes = [n for n in all_notes if isinstance(n, str) and n.startswith("User note:")]
+        other_notes = [n for n in all_notes if not (isinstance(n, str) and n.startswith("User note:"))]
+
         view: dict[str, Any] = {
-            "id": task["id"],
-            "phase": task["phase"],
-            "title": task["title"],
-            "description": task["description"],
-            "acceptance_criteria": task["acceptance_criteria"],
-            "dependencies": task.get("dependencies", []),
+            "id": fresh["id"],
+            "phase": fresh["phase"],
+            "title": fresh["title"],
+            "description": fresh["description"],
+            "acceptance_criteria": fresh["acceptance_criteria"],
+            "dependencies": fresh.get("dependencies", []),
             "iteration": iteration,
-            "prior_notes": task.get("notes", []),
+            # Put user_notes ABOVE prior_notes in the JSON output so the Coder
+            # sees them first. Only include the key if non-empty so we don't
+            # train the model to expect an "empty list means no user input."
         }
+        if user_notes:
+            view["user_notes"] = user_notes
+        view["prior_notes"] = other_notes
 
         # On retries, auto-include recent relevant decisions for THIS task so the
         # Coder doesn't have to explicitly fetch history to know why the last
@@ -105,7 +133,7 @@ def build_coder_tools(
         if iteration > 1:
             history = _relevant_task_decisions(
                 store=store,
-                task_id=task["id"],
+                task_id=fresh["id"],
                 limit=_MAX_AUTO_DECISIONS_IN_READ_TASK,
             )
             if history:

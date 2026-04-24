@@ -2,15 +2,22 @@
 
 The Reviewer verifies the Coder's work against task acceptance criteria. It's a
 skeptical quality gate — reads files, runs commands, and decides approve or
-request_changes. Unlike the Coder, it does NOT write files: its only mutation
-is submit_review which ends the review run.
+request_changes.
+
+The Reviewer CANNOT modify the Coder's code or project files. Its only write
+access is to a scratch directory under `.devteam/review-scratch/<task_id>/` where
+it can drop verification scripts. This prevents the Reviewer from "fixing" what
+it's supposed to be judging, while still giving it a way to write multi-line
+Python scripts it needs to execute (on Windows, `python -c` mangles newlines, so
+the Reviewer MUST write a .py file and then run it).
 
 Tool list:
-  - read_task      — read the current task spec + acceptance criteria
-  - fs_list        — list files in the project
-  - fs_read        — read a text file
-  - bash           — run a whitelisted command (tests, linters, start server, etc.)
-  - submit_review  — declare approve or request_changes. Ends the run.
+  - read_task                  — read the current task spec + acceptance criteria
+  - fs_list                    — list files in the project (read-only)
+  - fs_read                    — read a text file (read-only)
+  - write_verification_script  — write a script under .devteam/review-scratch/
+  - bash                       — run a whitelisted command
+  - submit_review              — declare approve or request_changes. Ends the run.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from ..sandbox import (
     SandboxExecutor,
     safe_list,
     safe_read,
+    safe_write,
 )
 from ..state import ProjectStore
 
@@ -147,6 +155,61 @@ def build_reviewer_tools(
         except PathOutsideProject as exc:
             return ToolResult(content=str(exc), is_error=True)
         return ToolResult(content=result.content)
+
+    # ---- write_verification_script -------------------------------------------
+
+    # Root for Reviewer-authored scripts. Everything the Reviewer writes goes here;
+    # this keeps the Reviewer out of the actual project source and makes cleanup
+    # straightforward (just nuke this dir after the task).
+    scratch_relative_root = f".devteam/review-scratch/{task['id']}"
+
+    async def write_verification_script_exec(args: dict[str, Any]) -> ToolResult:
+        filename = args.get("filename")
+        content = args.get("content")
+        if not filename or not isinstance(filename, str):
+            return ToolResult(
+                content="Missing 'filename' (e.g., 'verify.py')",
+                is_error=True,
+            )
+        # Disallow path separators so the Reviewer can't escape the scratch dir.
+        # The tool is "write a script" not "write anywhere".
+        if "/" in filename or "\\" in filename or filename.startswith("."):
+            return ToolResult(
+                content=(
+                    "filename must be a simple name like 'verify.py' — no slashes, "
+                    "no leading dot, no subdirectories."
+                ),
+                is_error=True,
+            )
+        if content is None or not isinstance(content, str):
+            return ToolResult(
+                content="Missing 'content' — the full text of the script",
+                is_error=True,
+            )
+
+        rel_path = f"{scratch_relative_root}/{filename}"
+        try:
+            resolved = safe_write(sandbox.project_root, rel_path, content)
+        except PathOutsideProject as exc:
+            return ToolResult(content=str(exc), is_error=True)
+        except OSError as exc:
+            return ToolResult(content=f"Write failed: {exc}", is_error=True)
+
+        await store.append_decision(
+            {
+                "actor": "reviewer",
+                "kind": "verification_script_written",
+                "task_id": task["id"],
+                "path": rel_path,
+                "bytes": len(content.encode("utf-8")),
+            }
+        )
+        return ToolResult(
+            content=(
+                f"Wrote {len(content)} chars to {rel_path}. "
+                f"Run it with: bash argv=['python', '{rel_path}']"
+            )
+        )
 
     # ---- bash -----------------------------------------------------------------
 
@@ -318,13 +381,51 @@ def build_reviewer_tools(
             executor=fs_read_exec,
         ),
         ToolSpec(
+            name="write_verification_script",
+            description=(
+                "Write a verification script under .devteam/review-scratch/<task_id>/. "
+                "Use this whenever you need multi-line logic to check the Coder's work "
+                "— CRITICAL on Windows where `python -c` mangles newlines and multi-line "
+                "scripts fail. Write the script with this tool, then run it with "
+                "bash argv=['python', '.devteam/review-scratch/<task_id>/<filename>']. "
+                "You cannot modify the Coder's project files — this scratch directory "
+                "is the only place you can write. Scripts here are auto-cleaned when "
+                "the task is marked done.\n\n"
+                "Example: write a script named 'verify_endpoint.py' that starts the "
+                "server, curls an endpoint, and asserts the response, instead of trying "
+                "to cram all that into a single `python -c` call."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": (
+                            "Simple filename like 'verify.py' or 'check_output.sh'. "
+                            "No slashes, no leading dot — just the name."
+                        ),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full text of the script",
+                    },
+                },
+                "required": ["filename", "content"],
+            },
+            executor=write_verification_script_exec,
+        ),
+        ToolSpec(
             name="bash",
             description=(
                 "Run a command in the sandbox. This is NOT a shell — pass argv as a list "
                 "of strings. Example: {'argv': ['pytest', '-q']}. Use this to actually "
                 "run the tests the Coder wrote (do not trust the Coder's claim they pass), "
                 "run linters, start a server and curl an endpoint, etc. Only whitelisted "
-                "commands are allowed. Default timeout 60s."
+                "commands are allowed. Default timeout 60s.\n\n"
+                "IMPORTANT — `python -c` limitation on Windows: passing multi-line scripts "
+                "to `python -c` breaks because Windows mangles newlines in argv. If you "
+                "need more than one statement, use write_verification_script to write a "
+                ".py file, then run it with argv=['python', '<path-to-script>']."
             ),
             input_schema={
                 "type": "object",

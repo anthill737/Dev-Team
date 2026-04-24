@@ -428,3 +428,108 @@ def test_cannot_approve_plan_from_wrong_state() -> None:
 
         with pytest.raises(RuntimeError, match="Cannot approve plan"):
             asyncio.run(orchestrator.approve_plan())
+
+
+def test_stream_execution_loop_runs_dispatcher_inline_from_dispatching() -> None:
+    """Unified path used by the background job: stream_execution_loop called with
+    status=DISPATCHING must run the Dispatcher first, then transition into the
+    execution loop. This is what makes 'approve plan, navigate away' actually
+    work — the whole dispatch+execute flow lives in one coroutine that the job
+    registry drives, independent of any WebSocket.
+
+    Without this test, a regression that breaks the unified path would only
+    surface during real end-to-end use. The fix for the background-execution
+    bug depends on this behavior."""
+    from app.agents.base import AgentRunner as _AgentRunner
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ProjectStore(tmp)
+        store.init(project_id="proj_unified", name="Unified test")
+        store.write_plan(SAMPLE_PLAN)
+        meta = store.read_meta()
+        meta.status = ProjectStatus.AWAIT_APPROVAL
+        store.write_meta(meta)
+
+        # Approve plan to flip status to DISPATCHING — this is what decide_plan
+        # does on approve. Now the background job kicks off stream_execution_loop
+        # from DISPATCHING, which is the behavior we're verifying here.
+        dispatcher_script = [
+            ("read_phase", {}),
+            ("write_tasks", {"tasks": _well_formed_tasks()}),
+            ("mark_dispatch_complete", {"summary": "P1 decomposed"}),
+        ]
+        runner = ScriptedRunner(dispatcher_script, final_text="done")
+        orchestrator = Orchestrator(store=store, runner=runner)  # type: ignore[arg-type]
+        asyncio.run(orchestrator.approve_plan())
+
+        meta_before = store.read_meta()
+        assert meta_before.status == ProjectStatus.DISPATCHING, (
+            "Precondition: approve_plan should leave project in DISPATCHING"
+        )
+
+        # The scripted runner only knows Dispatcher tools. Once Dispatcher finishes,
+        # the Coder phase would call runner.stream() too, but with Coder tools. Since
+        # we want to verify the dispatcher ran inline, we just check the post-stream
+        # state: status should be EXECUTING (dispatcher ran), tasks should exist,
+        # and the Coder would have tried to run (and likely produced no-op events
+        # because the script is depleted).
+        async def consume() -> list:
+            events = []
+            async for ev in orchestrator.stream_execution_loop():
+                events.append(ev)
+                # Safety: break if we see too many events (Coder could loop)
+                if len(events) > 200:
+                    break
+            return events
+
+        events = asyncio.run(consume())
+
+        # Dispatcher tool calls must appear in the stream
+        tool_names = [
+            e.payload.get("name")
+            for e in events
+            if e.kind == "tool_use_start"
+        ]
+        assert "read_phase" in tool_names, (
+            f"Expected dispatcher to run read_phase; saw tool calls: {tool_names}"
+        )
+        assert "write_tasks" in tool_names
+        assert "mark_dispatch_complete" in tool_names
+
+        # Tasks must now exist — the Dispatcher wrote them
+        tasks_after = store.read_tasks()
+        assert len(tasks_after) >= 1, "Dispatcher should have written at least one task"
+
+        # Post-dispatcher status must be EXECUTING (the dispatcher's
+        # mark_dispatch_complete tool flips status to EXECUTING)
+        meta_after_dispatch = store.read_meta()
+        assert meta_after_dispatch.status in (
+            ProjectStatus.EXECUTING,
+            ProjectStatus.BLOCKED,
+            ProjectStatus.COMPLETE,
+        ), (
+            f"After dispatcher+execution attempt, status should be executing/"
+            f"blocked/complete (depending on Coder outcome in the unified loop); "
+            f"got {meta_after_dispatch.status}"
+        )
+
+
+def test_stream_execution_loop_errors_if_not_in_runnable_state() -> None:
+    """Guard: stream_execution_loop must refuse to run if project isn't in
+    DISPATCHING or EXECUTING. Protects against being invoked accidentally
+    from interview or await_approval state."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ProjectStore(tmp)
+        store.init(project_id="proj_guard", name="Guard test")
+        # Leave in INIT
+        runner = ScriptedRunner([])
+        orchestrator = Orchestrator(store=store, runner=runner)  # type: ignore[arg-type]
+
+        async def consume() -> list:
+            return [ev async for ev in orchestrator.stream_execution_loop()]
+
+        events = asyncio.run(consume())
+        # Should yield exactly one error event and stop
+        assert len(events) == 1
+        assert events[0].kind == "error"
+        assert "not available" in events[0].payload.get("message", "").lower()

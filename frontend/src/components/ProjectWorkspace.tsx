@@ -9,6 +9,8 @@ import {
   retryDispatcher,
   resumeExecution,
   addWork,
+  pauseProject,
+  resumePausedProject,
 } from "../lib/api";
 import type { DecisionEntry, InterviewTurn, ProjectDetail, Task } from "../lib/types";
 import { useArchitectStream } from "../hooks/useArchitectStream";
@@ -19,6 +21,7 @@ import { CompletedTasks } from "./CompletedTasks";
 import { DecisionsLog } from "./DecisionsLog";
 import { LiveExecution } from "./LiveExecution";
 import { PlanViewer } from "./PlanViewer";
+import { EditProjectModal } from "./ProjectList";
 import { StatusBar } from "./StatusBar";
 import { TaskReviewPanel } from "./TaskReviewPanel";
 import { TasksView } from "./TasksView";
@@ -37,6 +40,12 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
   const [retryingDispatcher, setRetryingDispatcher] = useState(false);
   const [resumingExecution, setResumingExecution] = useState(false);
   const [addingWork, setAddingWork] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [resumingPaused, setResumingPaused] = useState(false);
+  // Project-settings gear in StatusBar opens the same EditProjectModal used on
+  // the project list. Keeping the state here (in the workspace) so it can live
+  // alongside the other mid-project actions.
+  const [showSettings, setShowSettings] = useState(false);
 
   const refreshProjectData = useCallback(async () => {
     try {
@@ -109,21 +118,20 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
     status: wsStatus,
   } = useArchitectStream(projectId, refreshProjectData);
 
-  // Dispatcher auto-runs when status transitions to "dispatching". The hook opens the
-  // WebSocket, backend streams the dispatcher run, closes the socket when done. We
-  // refresh data on completion so the Tasks panel populates.
-  const dispatcher = useDispatcherStream(
-    projectId,
-    project?.status === "dispatching",
-    refreshProjectData,
-  );
+  // Dispatcher + execution now run as one background job (see job_registry on
+  // the backend). Dispatcher events flow through the execution WS as part of
+  // that stream — no separate dispatcher connection. Keeping the hook instance
+  // around but never triggering it so types stay clean; TODO remove the hook
+  // entirely in a future pass.
+  const dispatcher = useDispatcherStream(projectId, false, refreshProjectData);
 
-  // Execution loop auto-runs when status transitions to "executing". Stays open for the
-  // duration of the phase (can be many minutes, many tasks). Refreshes data on close so
-  // final task states propagate.
+  // Execution viewer: opens as soon as the project is dispatching or executing.
+  // The backend runs the combined dispatcher+execution stream as a background
+  // job; this WS subscribes and replays/streams events. Disconnecting does NOT
+  // stop the work, which is the whole point of the background model.
   const execution = useExecutionStream(
     projectId,
-    project?.status === "executing",
+    project?.status === "dispatching" || project?.status === "executing",
     refreshProjectData,
   );
 
@@ -273,6 +281,58 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
     }
   };
 
+  const handlePause = async () => {
+    setPausing(true);
+    try {
+      await pauseProject(projectId);
+      // Status flips to PAUSED; execution loop halts at next task boundary.
+      // The currently-running Coder or Reviewer (if any) finishes first.
+      await refreshProjectData();
+    } catch (e) {
+      console.error("Pause failed", e);
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const handleResumePaused = async () => {
+    setResumingPaused(true);
+    try {
+      await resumePausedProject(projectId);
+      // Status flips back to EXECUTING; the execution WS reopens and resumes.
+      await refreshProjectData();
+    } catch (e) {
+      console.error("Resume failed", e);
+    } finally {
+      setResumingPaused(false);
+    }
+  };
+
+  const [forceSubmittingPlan, setForceSubmittingPlan] = useState(false);
+  const handleForceSubmitPlan = async () => {
+    // Confirm — this bypasses the Architect, which is a nontrivial step. User
+    // should understand what they're doing.
+    const ok = window.confirm(
+      "Force-submit plan for approval?\n\n" +
+      "This bypasses the Architect and uses whatever's currently in plan.md " +
+      "for approval. Only do this if the Architect is stuck logging 'handing off' " +
+      "entries without actually calling request_approval.\n\n" +
+      "If plan.md isn't ready yet, you can edit it directly in your editor " +
+      "first (.devteam/plan.md in your project folder)."
+    );
+    if (!ok) return;
+    setForceSubmittingPlan(true);
+    try {
+      const { forceSubmitPlan } = await import("../lib/api");
+      await forceSubmitPlan(projectId);
+      await refreshProjectData();
+    } catch (e) {
+      alert(`Force-submit failed: ${(e as Error).message}`);
+    } finally {
+      setForceSubmittingPlan(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between px-4 py-2 border-b border-line bg-panel/50">
@@ -368,6 +428,13 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         resumingExecution={resumingExecution}
         onAddWork={project?.status === "complete" ? handleAddWork : undefined}
         addingWork={addingWork}
+        onPause={handlePause}
+        pausing={pausing}
+        onResumePaused={handleResumePaused}
+        resumingPaused={resumingPaused}
+        onOpenSettings={() => setShowSettings(true)}
+        onForceSubmitPlan={handleForceSubmitPlan}
+        forceSubmittingPlan={forceSubmittingPlan}
       />
 
       <div className="flex-1 grid grid-cols-[2fr_2fr_1fr] min-h-0 divide-x divide-line">
@@ -414,6 +481,7 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
                 dispatcherRunning={dispatcher.status === "running"}
                 dispatcherActivity={dispatcher.toolActivity}
                 dispatcherError={dispatcher.error}
+                onTasksChanged={refreshProjectData}
               />
             )}
           </div>
@@ -435,6 +503,26 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
           </div>
         </div>
       </div>
+
+      {showSettings && project && (
+        <EditProjectModal
+          project={{
+            id: project.id,
+            name: project.name,
+            root_path: project.root_path,
+            status: project.status,
+            created_at: project.created_at,
+            tokens_used: project.tokens_used,
+            tasks_completed: project.tasks_completed,
+            is_running: project.is_running,
+          }}
+          onClose={() => setShowSettings(false)}
+          onSaved={() => {
+            setShowSettings(false);
+            refreshProjectData();
+          }}
+        />
+      )}
     </div>
   );
 }

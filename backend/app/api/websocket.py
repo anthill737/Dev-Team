@@ -214,58 +214,171 @@ async def _architect_loop(
 async def _execution_loop(
     websocket: WebSocket, orchestrator: Orchestrator, store: ProjectStore, project_id: str
 ) -> None:
-    """Stream the execution loop (Coder driving tasks) until a terminal state."""
-    try:
-        async for event in orchestrator.stream_execution_loop():
-            out = _translate_event(event)
-            if out is not None:
-                await _send(websocket, out)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Execution loop failed for project %s", project_id)
-        await _send(
-            websocket,
-            {"type": "error", "message": f"Execution loop failed: {exc}"},
+    """View an execution loop running as a background job.
+
+    We are NOT driving the loop here — that's done by the JobRegistry as an
+    asyncio task decoupled from any WebSocket. Our only jobs:
+      1. If a job exists: replay its buffered events and stream new ones live.
+      2. If no job exists but project status is EXECUTING: start one.
+         (Handles resume-from-paused, backend restart, and late attachment.)
+      3. Disconnect cleanly without stopping the job.
+    """
+    from ..orchestrator.job_registry import get_registry
+
+    registry = get_registry()
+
+    # Start a job if the project is in an executable state and nothing's running.
+    # If there's already a job, ensure_running is a no-op — the existing job stays.
+    meta = store.read_meta()
+    if (
+        meta.status in (ProjectStatus.EXECUTING, ProjectStatus.DISPATCHING)
+        and not registry.is_running(project_id)
+    ):
+        await registry.ensure_running(
+            project_id, lambda: orchestrator.stream_execution_loop()
         )
 
-    meta = store.read_meta()
-    await _send(
-        websocket,
-        {
-            "type": "turn_complete",
-            "status": meta.status.value,
-            "tokens_used": meta.tokens_used,
-        },
-    )
-    await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+    subscription = await registry.subscribe(project_id)
+    if subscription is None:
+        # No job exists and project status isn't executable. Tell the client
+        # what the current state is so it can reflect it, then close cleanly.
+        meta = store.read_meta()
+        await _send(
+            websocket,
+            {
+                "type": "turn_complete",
+                "status": meta.status.value,
+                "tokens_used": meta.tokens_used,
+            },
+        )
+        await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+        return
+
+    replay, queue = subscription
+
+    try:
+        # Replay buffered events first so the viewer sees the story from where
+        # the buffer starts. The wire protocol is the same whether replayed or live.
+        for job_ev in replay:
+            out = _translate_event(_ReplayEvent(job_ev.kind, job_ev.payload))
+            if out is not None:
+                await _send(websocket, out)
+
+        # Live stream from the subscription queue until the job signals end (None).
+        while True:
+            job_ev = await queue.get()
+            if job_ev is None:
+                break  # Job finished
+            out = _translate_event(_ReplayEvent(job_ev.kind, job_ev.payload))
+            if out is not None:
+                await _send(websocket, out)
+
+        # Job done — send a final turn_complete with the on-disk state.
+        meta = store.read_meta()
+        await _send(
+            websocket,
+            {
+                "type": "turn_complete",
+                "status": meta.status.value,
+                "tokens_used": meta.tokens_used,
+            },
+        )
+    except WebSocketDisconnect:
+        logger.info(
+            "Execution viewer disconnected for project %s; job continues in background",
+            project_id,
+        )
+        # Let the job keep running — it's not tied to this WS.
+    finally:
+        await registry.unsubscribe(project_id, queue)
+
+    try:
+        await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+    except RuntimeError:
+        pass  # Already closed
+
+
+class _ReplayEvent:
+    """Duck-typed StreamEvent shim for _translate_event which expects .kind/.payload."""
+
+    __slots__ = ("kind", "payload")
+
+    def __init__(self, kind: str, payload: dict[str, Any]) -> None:
+        self.kind = kind
+        self.payload = payload
 
 
 async def _dispatcher_oneshot(
     websocket: WebSocket, orchestrator: Orchestrator, store: ProjectStore, project_id: str
 ) -> None:
-    """One-shot: run the dispatcher once, stream events, close."""
-    try:
-        async for event in orchestrator.stream_dispatcher_turn():
-            out = _translate_event(event)
-            if out is not None:
-                await _send(websocket, out)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Dispatcher run failed for project %s", project_id)
-        await _send(
-            websocket,
-            {"type": "error", "message": f"Dispatcher run failed: {exc}"},
+    """Legacy dispatcher-only WebSocket. Kept for backward compatibility but no
+    longer the primary path.
+
+    New model: decide_plan → ensure_background_execution → stream_execution_loop
+    runs the dispatcher AND the execution loop together as one background job.
+    Clients opening this WS will still see dispatcher events stream, but the
+    corresponding background job is the authoritative one for state changes.
+    If no background job is running yet, this WS will kick one off via the
+    idempotent ensure_running (no double-dispatch because the job registry
+    dedupes per project_id).
+    """
+    from ..orchestrator.job_registry import get_registry
+
+    registry = get_registry()
+    if not registry.is_running(project_id):
+        # No background job running — start one. It will run dispatcher + execution.
+        await registry.ensure_running(
+            project_id, lambda: orchestrator.stream_execution_loop()
         )
 
+    # Subscribe to the running job just like the execution WS does; let the
+    # viewer see the stream.
+    subscription = await registry.subscribe(project_id)
+    if subscription is None:
+        await _send(
+            websocket,
+            {"type": "error", "message": "Could not attach to dispatcher job"},
+        )
+        await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+        return
+    replay, queue = subscription
+
+    try:
+        for job_ev in replay:
+            out = _translate_event(_ReplayEvent(job_ev.kind, job_ev.payload))
+            if out is not None:
+                await _send(websocket, out)
+        # Dispatcher WS historically closes after dispatcher turn completes. We
+        # detect that by watching for status flip to EXECUTING (or terminal).
+        while True:
+            job_ev = await queue.get()
+            if job_ev is None:
+                break
+            out = _translate_event(_ReplayEvent(job_ev.kind, job_ev.payload))
+            if out is not None:
+                await _send(websocket, out)
+            # Close this WS once dispatcher is done — frontend expects one-shot.
+            meta = store.read_meta()
+            if meta.status != ProjectStatus.DISPATCHING:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await registry.unsubscribe(project_id, queue)
+
     meta = store.read_meta()
-    await _send(
-        websocket,
-        {
-            "type": "turn_complete",
-            "status": meta.status.value,
-            "tokens_used": meta.tokens_used,
-        },
-    )
-    # Dispatcher is one-shot — close the socket now so the frontend knows it's done.
-    await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+    try:
+        await _send(
+            websocket,
+            {
+                "type": "turn_complete",
+                "status": meta.status.value,
+                "tokens_used": meta.tokens_used,
+            },
+        )
+        await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+    except RuntimeError:
+        pass
 
 
 async def _send(ws: WebSocket, payload: dict[str, Any]) -> None:

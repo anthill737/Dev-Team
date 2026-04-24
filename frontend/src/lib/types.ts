@@ -22,6 +22,10 @@ export interface ProjectSummary {
   created_at: number;
   tokens_used: number;
   tasks_completed: number;
+  // True when a background execution job is actively running. Distinct from
+  // status (which is on-disk state): a project can have status "executing"
+  // but no running job (e.g. backend was restarted mid-execution).
+  is_running?: boolean;
 }
 
 export interface ProjectPhase {
@@ -38,6 +42,10 @@ export interface ProjectDetail extends ProjectSummary {
   max_wall_clock_seconds: number | null;
   current_phase: string | null;
   phases: ProjectPhase[];
+  // Platform the user is on ("windows" | "macos" | "linux"). Set at project
+  // creation from the backend host; used to pick shell-syntax hints in
+  // Coder/Reviewer prompts. Editable via the project settings UI.
+  user_platform?: "windows" | "macos" | "linux";
   // Per-model token tracking for cost display. Default 0 for older projects.
   tokens_input_opus?: number;
   tokens_output_opus?: number;
@@ -70,6 +78,10 @@ export interface Task {
   iterations: number;
   budget_tokens: number;
   notes: string[];
+  // True when the user used the "Save and interrupt" action to halt the task
+  // mid-execution. The review panel treats approve/reject differently for
+  // interrupted tasks: approve resumes rather than marking done.
+  interrupted_by_user?: boolean;
   // Populated when the task is marked done by the execution loop.
   // Older tasks stored before this field existed may not have them.
   summary?: string;

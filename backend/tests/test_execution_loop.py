@@ -184,9 +184,10 @@ def test_loop_stamps_summary_and_completed_at_on_approved_task() -> None:
         assert task["completed_at"] > 0
 
 
-def test_loop_completes_phase_when_all_tasks_approved() -> None:
-    """Three tasks in P1, all approved in order. With a second phase pending, P1 should
-    complete and the project should transition to PHASE_REVIEW (not COMPLETE)."""
+def test_loop_auto_advances_to_next_phase_when_plan_has_one() -> None:
+    """P1 all tasks done + plan.md has P2 → loop flips to DISPATCHING with
+    current_phase=P2 so the orchestrator can invoke the Dispatcher for the new
+    phase without bouncing back to the user or the Architect."""
     from app.state.store import ProjectPhase
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -196,8 +197,9 @@ def test_loop_completes_phase_when_all_tasks_approved() -> None:
                 make_task("P1-T1"),
                 make_task("P1-T2", deps=["P1-T1"]),
                 make_task("P1-T3", deps=["P1-T2"]),
-                # A P2 task that's not part of the run — its presence is what makes
-                # P1 completion trigger PHASE_REVIEW instead of PROJECT_COMPLETE.
+                # P2 exists in tasks.json too — but the scheduler will only
+                # pick P1 tasks because current_phase=P1. After P1 completes
+                # auto-advance kicks in.
                 make_task("P2-T1", phase="P2"),
             ],
         )
@@ -207,6 +209,10 @@ def test_loop_completes_phase_when_all_tasks_approved() -> None:
             ProjectPhase(id="P2", title="Second", status="pending", approved_by_user=False),
         ]
         store.write_meta(meta)
+        # Plan.md with two phases — required for auto-advance to find the next one.
+        store.write_plan(
+            "# Plan\n\n## P1: First Phase\n\nDo some things.\n\n## P2: Second Phase\n\nDo more things.\n"
+        )
 
         sandbox = ProcessSandboxExecutor(tmp)
         runner = ScriptedTaskRunner(
@@ -220,21 +226,65 @@ def test_loop_completes_phase_when_all_tasks_approved() -> None:
         events = collect_events(loop.run())
 
         final_meta = store.read_meta()
-        assert final_meta.status == ProjectStatus.PHASE_REVIEW
-        # Phase P1 itself should be marked done in meta.phases
+        # Auto-advance: status is DISPATCHING for the new phase (NOT PHASE_REVIEW)
+        assert final_meta.status == ProjectStatus.DISPATCHING
+        assert final_meta.current_phase == "P2"
+
+        # P1 marked done, P2 marked active
         p1 = next(p for p in final_meta.phases if p.id == "P1")
+        p2 = next(p for p in final_meta.phases if p.id == "P2")
         assert p1.status == "done"
+        assert p2.status == "active"
+        # P2 gets approved_by_user=True because the plan was already approved
+        # as a whole — the Architect's phase list in plan.md is the source of
+        # truth, and the user approved that plan.
+        assert p2.approved_by_user is True
         assert final_meta.tasks_completed == 3
 
-        # All three P1 tasks should be done; P2 still pending
+        # Only P1 tasks ran (the Dispatcher for P2 hasn't been invoked yet at
+        # this level — that happens in the orchestrator wrapper, not here).
         tasks = store.read_tasks()
         p1_tasks = [t for t in tasks if t["phase"] == "P1"]
         assert all(t["status"] == "done" for t in p1_tasks)
-
-        # Runner was called in dep order and only for P1 tasks
         assert [c.task["id"] for c in runner.contexts_received] == ["P1-T1", "P1-T2", "P1-T3"]
 
-        # A phase_complete event was emitted
+        # An auto-advance event was emitted (distinct from phase_complete because
+        # the old halt-at-phase-boundary behavior isn't happening)
+        assert any(e.kind == "phase_auto_advance" for e in events)
+
+
+def test_loop_falls_back_to_phase_review_when_plan_is_empty() -> None:
+    """No plan.md content → auto-advance can't find a next phase → fall back
+    to the old PHASE_REVIEW halt. Shouldn't happen in production (every real
+    project has plan.md) but guards against crashes on edge cases."""
+    from app.state.store import ProjectPhase
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(
+            tmp,
+            [
+                make_task("P1-T1"),
+                make_task("P2-T1", phase="P2"),
+            ],
+        )
+        meta = store.read_meta()
+        meta.phases = [
+            ProjectPhase(id="P1", title="First", status="active", approved_by_user=True),
+            ProjectPhase(id="P2", title="Second", status="pending", approved_by_user=False),
+        ]
+        store.write_meta(meta)
+        # Deliberately DO NOT write plan.md — this forces the fallback path.
+
+        sandbox = ProcessSandboxExecutor(tmp)
+        runner = ScriptedTaskRunner(
+            [TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="T1 done")]
+        )
+        loop = ExecutionLoop(store=store, sandbox=sandbox, runner=runner)
+        events = collect_events(loop.run())
+
+        final_meta = store.read_meta()
+        # Fallback: old PHASE_REVIEW behavior when no next phase can be found
+        assert final_meta.status == ProjectStatus.PHASE_REVIEW
         assert any(e.kind == "phase_complete" for e in events)
 
 
@@ -812,7 +862,7 @@ def test_dispatcher_normalize_preserves_requires_review_and_cycles() -> None:
         "dependencies": [],
         "requires_review": True,
     }
-    norm = _normalize_task(raw, "P1")
+    norm = _normalize_task(raw, "P1", 150_000)
     assert norm["requires_review"] is True
     assert norm["review_cycles"] == 0
 
@@ -825,7 +875,7 @@ def test_dispatcher_normalize_preserves_requires_review_and_cycles() -> None:
         "acceptance_criteria": ["a"],
         "dependencies": [],
     }
-    norm2 = _normalize_task(raw2, "P1")
+    norm2 = _normalize_task(raw2, "P1", 150_000)
     assert norm2["requires_review"] is False
     assert norm2["review_cycles"] == 0
 

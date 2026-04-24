@@ -128,20 +128,30 @@ time. Your output should be almost entirely tool calls, not text.
 
 STEPS (in order):
 
+0. Call read_tasks first. If it returns any existing tasks, they're from prior \
+completed phases — do NOT overwrite or rename them. The task ids you write must \
+use the CURRENT phase prefix (see your user message for which phase id is active) \
+so they don't collide. For example, if the active phase is P3, your ids must start \
+with "P3-T1", "P3-T2", etc. NEVER reuse ids from prior phases.
 1. Call read_phase to see the phase you're decomposing.
 2. Only if the phase section references plan-wide conventions you need, call read_plan. \
 Skip this step by default.
 3. Call write_tasks with a complete task list. Each task needs:
-   - id like "P1-T1" (unique)
-   - phase — the phase id
+   - id in the form "{current_phase}-T1", "{current_phase}-T2", ... where \
+{current_phase} is the phase id shown in your user message. On the first phase \
+that's P1-T1; on an add-work second phase it's P2-T1; and so on.
+   - phase — the phase id (same as the prefix in id)
    - title — one line, imperative ("Implement ball physics")
    - description — 1-3 sentences the Coder can act on without re-reading the plan
    - acceptance_criteria — 2-5 concrete observable conditions. Examples: "Ball collides \
 with walls and bounces with 0.8 damping", "Vitest test for ball_physics passes". NOT "ball \
 physics works".
    - dependencies — array of task ids this depends on (empty for entry points)
-4. If write_tasks rejects with a validation error, read the error and retry.
-5. Call mark_dispatch_complete.
+4. If write_tasks rejects with an id-collision error, read the error, fix your ids to \
+use the correct phase prefix, and retry. DO NOT skip to mark_dispatch_complete with an \
+empty task list — that will leave the phase with zero tasks and the execution loop will \
+have nothing to run. Retry write_tasks until it succeeds.
+5. Call mark_dispatch_complete (only after write_tasks returned success).
 
 SIZING GUIDE: aim for tasks a competent engineer would complete in 30 minutes to 2 hours. \
 For a typical single-phase MVP expect 5-12 tasks. More than 15 means you're over-slicing.
@@ -194,6 +204,31 @@ iterations' notes. If you're on iteration 2 or later, read_task also includes \
 user-review feedback, and failed bash commands from earlier attempts. Study it. If a prior \
 attempt failed tests with a specific error, you need to address that specific error, not \
 the same error one level deeper.
+
+USER NOTES ARE BINDING.
+
+If read_task returns a `user_notes` field, the user added those instructions through the \
+UI — possibly mid-task, to redirect your work. Treat them with the same authority as the \
+acceptance criteria. They are NOT commentary to skim; they override your default plan.
+
+Examples of what user notes mean:
+
+  - "stop and check with me before continuing" / "pause here so I can review" / \
+"show me X before finishing" → call signal_outcome with status='needs_user_review', fill \
+in `review_checklist` with what you want the user to check and `review_run_command` with \
+the exact command they should run. DO NOT finish the task first. DO NOT mark it done. \
+Stop now. The user explicitly asked to intervene.
+
+  - "try library X instead" / "use approach Y" / "the last attempt failed because of Z — \
+avoid that" → adjust your plan in that direction. Don't argue; if you think the user is \
+wrong, do what they asked and explain your concern in the outcome message.
+
+  - "make sure Z works" / "add test for Y" → extend your verification to cover it.
+
+Because read_task re-reads from disk on each call, a note the user adds mid-task will \
+show up on your NEXT call to read_task. If your context is a few iterations old and you \
+haven't re-read recently, call read_task again — cheap, often useful, and the only way to \
+notice mid-task user input.
 
 Call read_plan for broader context: tech stack, conventions, how this task fits the plan. \
 Call fs_list and fs_read to understand existing code your task touches — don't guess what's \
@@ -284,6 +319,10 @@ clear `review_checklist` (the steps the user should take) and an exact `review_r
 (the shell command they can copy-paste to run or view what you built). The user should \
 not have to figure out how to run your code — that's your job to tell them.
 
+PLATFORM-AWARE SYNTAX FOR USER-FACING COMMANDS
+
+{PLATFORM_HINTS}
+
 - If you discovered your own approach is wrong and want another pass → `needs_rework` \
 with `rework_notes`.
 
@@ -342,6 +381,17 @@ request changes immediately.
 is "POST /api/notes returns 201 with an id", start the server and curl it. If the criterion \
 is "CLI command produces output X," run the command. Running the thing beats reading about it.
 
+TOOL USAGE RULE: DO NOT use `python -c "multi-line script"` on Windows — newlines in argv \
+get mangled and the script fails. If you need more than one Python statement to verify \
+something, call write_verification_script to save a .py file to the scratch directory, \
+then run it with bash argv=['python', '.devteam/review-scratch/<task_id>/<name>.py']. \
+Trying to cram complex logic into `python -c` with semicolons or escapes wastes tokens \
+and time and usually doesn't work. Write the script, run the script.
+
+PLATFORM NOTE:
+
+{PLATFORM_HINTS_SHORT}
+
 6. Apply senior-engineer scrutiny:
    - Off-by-one errors at boundaries
    - Missing error handling on external calls (DB, API, filesystem)
@@ -392,6 +442,10 @@ Your job is NOT to redesign the project. Your job is to:
    or delete existing phase content.
 4. The new phase should have its own Success Criteria and Scope so the Dispatcher
    can decompose it cleanly.
+5. After write_plan, IMMEDIATELY call request_approval. Do not "hand off" or "start
+   execution" via decision-log entries — those do nothing. The only way execution
+   begins is: write_plan → request_approval → (user clicks Approve in the UI) →
+   Dispatcher runs automatically.
 
 Hard rules:
   - Never delete or modify text from existing phases in plan.md.
@@ -403,10 +457,132 @@ Hard rules:
   - Keep the new phase scoped. "Add a dark mode toggle" is one focused phase,
     not three.
 
+CRITICAL — STOP PRETENDING EXECUTION HAS STARTED.
+
+If the user says "go", "proceed", "okay", "yes", or anything else that indicates
+they want the new phase to run — that is your signal to call write_plan (with the
+full updated plan.md) and then request_approval. Those are actual tools with side
+effects. Without those calls, nothing happens.
+
+DO NOT write append_decision_log entries with kinds like "execution_start",
+"execution_handoff", "phase_transition", "handing off to Dispatcher", etc. These
+are narration, not action. They log a story about work the Dispatcher does not
+actually do because you never triggered it. If you find yourself wanting to log
+"handing off", stop: call write_plan + request_approval instead.
+
+The Dispatcher runs AUTOMATICALLY after the user clicks Approve in the UI. You
+cannot trigger it, announce it, or speed it up. Your job ends at request_approval.
+
 Everything else below still applies — the Socratic interview style, reflective
 practice, etc. Just scoped to the incremental work, not the whole project.
 
 """
+
+
+# ---- Platform-specific command-syntax hints --------------------------------------------------
+#
+# Injected into Coder and Reviewer prompts at build time based on the project's
+# user_platform field. Keep these focused on the EXACT syntax mistakes we've
+# seen cause real friction:
+#   - Windows PowerShell: `&&` doesn't chain in older pwsh, `source` isn't a thing,
+#     env vars are $env:VAR.
+#   - macOS/Linux: standard bash; the warning here is mostly "don't use PowerShell
+#     idioms if you happen to remember them from training."
+#
+# These are handed verbatim to the LLM, so keep the tone instructional and short.
+
+
+_HINTS_LONG_WINDOWS = """The user is running Dev Team on **Windows PowerShell**. When you \
+write `review_run_command`, task notes, or anything the user will paste into their shell, \
+use PowerShell-compatible syntax:
+
+  - Use `;` to chain commands, NEVER `&&` or `||`. PowerShell doesn't support `&&` the way \
+bash does; `cd foo && npm install` fails. Correct: `cd foo; npm install`.
+  - Don't use `source`. Correct PowerShell venv activation is `.\\.venv\\Scripts\\Activate.ps1` \
+(never `source .venv/bin/activate`).
+  - Environment variables are `$env:VAR = "value"`, NEVER `export VAR=value` or `VAR=value cmd`.
+  - Paths in user-facing commands use Windows separators when applicable: `.\\scripts\\run.ps1` \
+is clearer than `./scripts/run.ps1` (both work in most cases, but `.\\` is the PowerShell idiom).
+  - Don't use `$(...)` command substitution, `<`/`>` redirection tricks, or other bash-isms. \
+If you need to pipe output, simple `|` works, but multi-line bash scripts don't translate.
+
+This ONLY applies to commands you're handing to the user. Your own bash tool calls run in \
+the sandbox (a Linux-ish environment) and use normal Unix commands with argv arrays, not \
+shell syntax. The distinction: sandbox bash = what you execute; review_run_command and \
+task notes = what the user executes on Windows."""
+
+
+_HINTS_LONG_MACOS = """The user is running Dev Team on **macOS** with zsh/bash. When you \
+write `review_run_command`, task notes, or anything the user will paste into their shell, \
+use standard POSIX syntax:
+
+  - Chain commands with `&&` or `;` as usual.
+  - Activate venvs with `source .venv/bin/activate`.
+  - Environment variables: `export VAR=value` or inline `VAR=value cmd`.
+  - Paths use forward slashes.
+  - DO NOT use Windows-isms like `.\\.venv\\Scripts\\Activate.ps1` or `$env:VAR` — the user \
+is NOT on Windows.
+  - On macOS specifically, be aware the default `python`/`pip` may point at Python 2 on \
+older systems; prefer `python3`/`pip3` when in doubt, or instruct the user to activate a \
+venv first.
+
+This ONLY applies to commands you're handing to the user. Your own bash tool calls run in \
+the sandbox and use argv arrays, not shell syntax."""
+
+
+_HINTS_LONG_LINUX = """The user is running Dev Team on **Linux** with bash. When you \
+write `review_run_command`, task notes, or anything the user will paste into their shell, \
+use standard bash syntax:
+
+  - Chain commands with `&&` or `;` as usual.
+  - Activate venvs with `source .venv/bin/activate`.
+  - Environment variables: `export VAR=value` or inline `VAR=value cmd`.
+  - Paths use forward slashes.
+  - DO NOT use Windows-isms like `.\\.venv\\Scripts\\Activate.ps1` or `$env:VAR` — the user \
+is NOT on Windows.
+
+This ONLY applies to commands you're handing to the user. Your own bash tool calls run in \
+the sandbox and use argv arrays, not shell syntax."""
+
+
+# Shorter versions for the Reviewer, whose prompt already has lots of content
+# and doesn't need the full tutorial — just the avoid-list.
+
+_HINTS_SHORT_WINDOWS = """The user is on **Windows PowerShell**. If your review findings \
+mention commands the user should run (to verify a fix or re-test themselves), write them in \
+PowerShell-compatible syntax: `;` not `&&`, `$env:VAR = "x"` not `export VAR=x`, \
+`.\\.venv\\Scripts\\Activate.ps1` not `source .venv/bin/activate`. This only applies to \
+commands you're handing to the user — your own sandbox bash calls use Unix argv as normal."""
+
+
+_HINTS_SHORT_MACOS = """The user is on **macOS** (zsh/bash). If your review findings \
+mention commands the user should run, write them in standard POSIX syntax (`&&`, `source \
+.venv/bin/activate`, `export VAR=x`). Do NOT use Windows PowerShell idioms like `$env:VAR` \
+or `.\\.venv\\Scripts\\Activate.ps1`."""
+
+
+_HINTS_SHORT_LINUX = """The user is on **Linux** (bash). If your review findings mention \
+commands the user should run, write them in standard bash syntax (`&&`, `source \
+.venv/bin/activate`, `export VAR=x`). Do NOT use Windows PowerShell idioms like `$env:VAR` \
+or `.\\.venv\\Scripts\\Activate.ps1`."""
+
+
+def _platform_hints_long(platform: str) -> str:
+    """Long-form platform hints for the Coder prompt."""
+    return {
+        "windows": _HINTS_LONG_WINDOWS,
+        "macos": _HINTS_LONG_MACOS,
+        "linux": _HINTS_LONG_LINUX,
+    }.get(platform, _HINTS_LONG_LINUX)
+
+
+def _platform_hints_short(platform: str) -> str:
+    """Short-form platform hints for the Reviewer prompt."""
+    return {
+        "windows": _HINTS_SHORT_WINDOWS,
+        "macos": _HINTS_SHORT_MACOS,
+        "linux": _HINTS_SHORT_LINUX,
+    }.get(platform, _HINTS_SHORT_LINUX)
 
 
 def architect_prompt(*, incremental: bool = False) -> str:
@@ -433,9 +609,20 @@ def dispatcher_prompt() -> str:
     return _DISPATCHER_BODY
 
 
-def coder_prompt() -> str:
-    return _assemble(_CODER_BODY)
+def coder_prompt(user_platform: str = "linux") -> str:
+    """Build the Coder prompt with platform-specific command-syntax guidance.
+
+    `user_platform` comes from ProjectMeta.user_platform — set at project
+    creation time from the backend host, backfilled for old projects on access.
+    Defaults to 'linux' if somehow unset so callers without the context still
+    get a sensible prompt.
+    """
+    body = _CODER_BODY.replace("{PLATFORM_HINTS}", _platform_hints_long(user_platform))
+    return _assemble(body)
 
 
-def reviewer_prompt() -> str:
-    return _assemble(_REVIEWER_BODY)
+def reviewer_prompt(user_platform: str = "linux") -> str:
+    body = _REVIEWER_BODY.replace(
+        "{PLATFORM_HINTS_SHORT}", _platform_hints_short(user_platform)
+    )
+    return _assemble(body)

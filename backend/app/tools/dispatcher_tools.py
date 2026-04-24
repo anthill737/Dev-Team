@@ -92,8 +92,15 @@ def _validate_tasks(tasks: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _normalize_task(t: dict[str, Any], phase_id: str) -> dict[str, Any]:
-    """Fill in sensible defaults for optional task fields."""
+def _normalize_task(
+    t: dict[str, Any], phase_id: str, default_budget: int
+) -> dict[str, Any]:
+    """Fill in sensible defaults for optional task fields.
+
+    `default_budget` comes from the project's default_task_token_budget, so a
+    user who raises the project-level default sees that reflected in new tasks
+    without needing to also set the Dispatcher's old hardcoded fallback.
+    """
     return {
         "id": t["id"],
         "phase": t.get("phase") or phase_id,
@@ -104,7 +111,7 @@ def _normalize_task(t: dict[str, Any], phase_id: str) -> dict[str, Any]:
         "status": t.get("status", "pending"),
         "assigned_to": t.get("assigned_to", "coder"),
         "iterations": t.get("iterations", 0),
-        "budget_tokens": t.get("budget_tokens", 150_000),
+        "budget_tokens": t.get("budget_tokens", default_budget),
         "notes": t.get("notes", []),
         # Reviewer agent wiring. Dispatcher decides per task whether a skeptical
         # Reviewer should verify the Coder's work. Default FALSE: existing projects
@@ -123,6 +130,18 @@ def _normalize_task(t: dict[str, Any], phase_id: str) -> dict[str, Any]:
 
 
 def build_dispatcher_tools(store: ProjectStore, phase_id: str) -> list[ToolSpec]:
+    """Build the dispatcher's tool set for a given phase.
+
+    Tracks whether THIS invocation successfully wrote tasks (via a closure flag).
+    mark_dispatch_complete gates on that flag — not on "are there tasks labeled
+    with this phase_id," which could be spoofed by previously-mislabeled tasks
+    or by race conditions on re-dispatch. This closes a bug where the Dispatcher
+    would give up on a collision and call mark_dispatch_complete, which would
+    incorrectly succeed and flip the project to EXECUTING with zero new tasks.
+    """
+    # Mutable state for this dispatcher invocation. write_tasks_exec sets this
+    # on a successful commit; mark_dispatch_complete_exec refuses to run without it.
+    wrote_tasks_this_invocation: dict[str, int] = {"count": 0}
     """Build the Dispatcher's tool set, scoped to decomposing the given phase."""
 
     async def read_plan_exec(_args: dict[str, Any]) -> ToolResult:
@@ -221,8 +240,13 @@ def build_dispatcher_tools(store: ProjectStore, phase_id: str) -> list[ToolSpec]
             )
             return ToolResult(content=f"Task list rejected: {err}", is_error=True)
 
-        # Normalize defaults
-        normalized = [_normalize_task(t, phase_id) for t in tasks]
+        # Normalize defaults. Use the project's configured default_task_token_budget
+        # so the Dispatcher respects settings the user changed after project creation.
+        meta_for_budget = store.read_meta()
+        default_budget = meta_for_budget.default_task_token_budget
+        normalized = [
+            _normalize_task(t, phase_id, default_budget) for t in tasks
+        ]
 
         # Append to existing tasks rather than replacing — supports future re-dispatch
         existing = store.read_tasks()
@@ -247,6 +271,7 @@ def build_dispatcher_tools(store: ProjectStore, phase_id: str) -> list[ToolSpec]
             )
 
         store.write_tasks(existing + normalized)
+        wrote_tasks_this_invocation["count"] += len(normalized)
         await store.append_decision(
             {
                 "actor": "dispatcher",
@@ -270,16 +295,35 @@ def build_dispatcher_tools(store: ProjectStore, phase_id: str) -> list[ToolSpec]
 
     async def mark_dispatch_complete_exec(args: dict[str, Any]) -> ToolResult:
         summary = args.get("summary", "").strip()
-        tasks = store.read_tasks()
-        phase_task_count = sum(1 for t in tasks if t.get("phase") == phase_id)
-        if phase_task_count == 0:
+
+        # Hard gate: THIS invocation must have written tasks. Counting "tasks
+        # labeled with phase_id" from disk is not enough — that would succeed
+        # on a no-op re-dispatch where write_tasks failed (e.g. id collision),
+        # which was the exact bug this closes. If the Dispatcher gave up before
+        # writing, mark_dispatch_complete must refuse to transition the project.
+        if wrote_tasks_this_invocation["count"] == 0:
+            await store.append_decision(
+                {
+                    "actor": "dispatcher",
+                    "kind": "mark_dispatch_complete_rejected",
+                    "phase": phase_id,
+                    "reason": "no tasks written this invocation",
+                }
+            )
             return ToolResult(
                 content=(
-                    f"Cannot mark dispatch complete — no tasks written yet for {phase_id}. "
-                    f"Call write_tasks first."
+                    f"Cannot mark dispatch complete — you haven't successfully "
+                    f"called write_tasks yet for {phase_id}. If write_tasks failed "
+                    f"with an id collision, retry with correct ids: {phase_id}-T1, "
+                    f"{phase_id}-T2, etc. Do NOT give up and mark complete — the "
+                    f"phase has no tasks and the execution loop will have nothing "
+                    f"to run."
                 ),
                 is_error=True,
             )
+
+        tasks = store.read_tasks()
+        phase_task_count = sum(1 for t in tasks if t.get("phase") == phase_id)
         await store.append_decision(
             {
                 "actor": "dispatcher",

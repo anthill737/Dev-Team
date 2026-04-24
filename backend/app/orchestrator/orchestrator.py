@@ -196,11 +196,17 @@ class Orchestrator:
             content=[
                 TextBlock(
                     text=(
-                        f"Decompose phase {phase_id} ({phase_title!r}) into tasks. "
-                        f"Call read_phase first, then call write_tasks with the committed "
-                        f"list, then call mark_dispatch_complete. Use ids {phase_id}-T1, "
-                        f"{phase_id}-T2, etc. Be fast — commit tasks with tool calls, not "
-                        f"with long prose."
+                        f"Decompose phase {phase_id} ({phase_title!r}) into tasks.\n\n"
+                        f"Active phase: **{phase_id}**. All task ids you write MUST "
+                        f"start with {phase_id}- (e.g. {phase_id}-T1, {phase_id}-T2). "
+                        f"Prior phases may have completed tasks with different prefixes "
+                        f"— leave those alone.\n\n"
+                        f"Steps: call read_tasks to see existing tasks (if any), call "
+                        f"read_phase, call write_tasks with correct {phase_id}-prefixed "
+                        f"ids, then call mark_dispatch_complete. If write_tasks rejects "
+                        f"with a collision, fix your ids and retry — do NOT skip to "
+                        f"mark_dispatch_complete. Be fast: commit via tool calls, not "
+                        f"long prose."
                     )
                 )
             ],
@@ -309,13 +315,16 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def stream_execution_loop(self) -> AsyncIterator[StreamEvent]:
-        """Drive the execution loop for an approved phase.
+        """Drive dispatcher (if needed) and execution loop as one coherent stream.
 
-        Builds the Coder + sandbox + ExecutionLoop and streams events out to the
-        WebSocket. Requires the project to be in DISPATCHING (just dispatched) or
-        EXECUTING (resuming after restart). Exits cleanly on phase complete, project
-        complete, blocked, paused, or deadlock — the frontend's status polling picks
-        up the state change and navigates accordingly.
+        If the project is in DISPATCHING state, runs the Dispatcher first, then
+        proceeds to the execution loop. If already EXECUTING (resuming after
+        restart or paused-resume), goes straight to execution.
+
+        Exits cleanly on phase complete, project complete, blocked, paused, or
+        deadlock. Because this is designed to run as a background job, NO WS
+        needs to be attached for it to make progress — events buffer in the
+        JobRegistry and stream to any viewer that connects later.
         """
         from ..agents.coder import Coder
         from ..sandbox import ProcessSandboxExecutor
@@ -360,16 +369,53 @@ class Orchestrator:
             reviewer_model=self.settings.model_reviewer,
         )
 
-        await self.store.append_decision(
-            {"actor": "orchestrator", "kind": "execution_loop_start"}
-        )
+        # Multi-phase auto-advance. Normally this loop runs once: Dispatcher (if
+        # needed) → ExecutionLoop → return. But when the ExecutionLoop finishes
+        # a phase and plan.md has another, the loop flips status back to
+        # DISPATCHING and returns. We detect that here and re-enter the Dispatcher
+        # path for the new phase. Hard ceiling to prevent a pathological plan
+        # with no ever-executable phase from looping forever.
+        _MAX_PHASE_ADVANCES = 20
+        advances = 0
+        while True:
+            # Re-read meta in case a prior iteration flipped status
+            meta = self.store.read_meta()
 
-        async for event in loop.run():
-            yield event
+            # If we landed here in DISPATCHING (either initial call or post
+            # auto-advance), run the Dispatcher for the current phase.
+            if meta.status == ProjectStatus.DISPATCHING:
+                async for event in self.stream_dispatcher_turn():
+                    yield event
+                meta = self.store.read_meta()
+                if meta.status != ProjectStatus.EXECUTING:
+                    # Dispatcher failed (blocked) — halt; user retries dispatcher.
+                    return
 
-        await self.store.append_decision(
-            {"actor": "orchestrator", "kind": "execution_loop_end"}
-        )
+            await self.store.append_decision(
+                {"actor": "orchestrator", "kind": "execution_loop_start"}
+            )
+
+            async for event in loop.run():
+                yield event
+
+            await self.store.append_decision(
+                {"actor": "orchestrator", "kind": "execution_loop_end"}
+            )
+
+            # If the ExecutionLoop returned with status back in DISPATCHING,
+            # that's the auto-advance signal — a new phase is queued and
+            # needs a Dispatcher pass. Otherwise, we're done (complete,
+            # blocked, paused, phase_review, etc.).
+            meta = self.store.read_meta()
+            if meta.status != ProjectStatus.DISPATCHING:
+                return
+            advances += 1
+            if advances >= _MAX_PHASE_ADVANCES:
+                logger.warning(
+                    "Phase auto-advance exceeded %d iterations; halting to "
+                    "prevent infinite loop.", _MAX_PHASE_ADVANCES,
+                )
+                return
 
     async def approve_plan(self) -> str | None:
         """User approves the plan. Parse phases, transition to DISPATCHING.
@@ -397,12 +443,34 @@ class Orchestrator:
         # Preserve status/approval of any previously-completed phases. This is
         # what makes incremental (add-work) flow safe: P1 stays marked done and
         # its tasks stay done; only the new phase(s) become active.
+        #
+        # Defense-in-depth: a phase counts as "done" if either its status is
+        # "done" OR every task in it is done. The second case protects against
+        # meta.phases getting out of sync with tasks.json — if execution marked
+        # all tasks done but some earlier code path didn't flip the phase
+        # status, we still recognize the phase as complete here instead of
+        # trying to redispatch it and colliding with existing task ids.
+        existing_tasks = self.store.read_tasks()
+        tasks_by_phase: dict[str, list[dict]] = {}
+        for t in existing_tasks:
+            tasks_by_phase.setdefault(t.get("phase", ""), []).append(t)
+
+        def _phase_is_effectively_done(phase: ProjectPhase) -> bool:
+            if phase.status == "done":
+                return True
+            phase_tasks = tasks_by_phase.get(phase.id, [])
+            if not phase_tasks:
+                return False  # no tasks yet — not done
+            return all(t.get("status") == "done" for t in phase_tasks)
+
         prior_by_id = {p.id: p for p in meta.phases}
         new_phases: list[ProjectPhase] = []
         for p in parsed:
             prior = prior_by_id.get(p.id)
-            if prior and prior.status == "done":
-                # Keep done phases fully intact
+            if prior and _phase_is_effectively_done(prior):
+                # Keep done phases fully intact. Normalize status to "done" in
+                # case we recovered via the all-tasks-done path.
+                prior.status = "done"
                 new_phases.append(prior)
             else:
                 new_phases.append(

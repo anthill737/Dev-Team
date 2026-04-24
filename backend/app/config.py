@@ -31,9 +31,17 @@ class Settings(BaseSettings):
     model_reviewer: str = "claude-opus-4-7"
 
     # Default budgets. Overridable per project during setup.
-    default_task_token_budget: int = 50_000
-    default_project_token_budget: int = 2_000_000
-    default_max_task_iterations: int = 5
+    # Budget defaults. These are the numbers applied when a user creates a
+    # project without overriding them. Chosen based on real-world runs:
+    #   - 150k/task is enough for most tasks that aren't trivially small.
+    #     Anything below ~75k routinely runs out mid-task on non-toy work.
+    #   - 5M project budget covers a normal MVP run (7-15 tasks, some review
+    #     cycles). Well under pricing concerns for Sonnet/Haiku work.
+    #   - 8 iterations lets the Coder recover from a couple of blind alleys
+    #     before escalating to the user. 5 was too tight in practice.
+    default_task_token_budget: int = 150_000
+    default_project_token_budget: int = 5_000_000
+    default_max_task_iterations: int = 8
 
     # Sandbox
     sandbox_image: str = "devteam-sandbox:latest"
@@ -56,3 +64,20 @@ def get_settings() -> Settings:
     if _settings is None:
         _settings = Settings()
     return _settings
+
+
+def detect_host_platform() -> str:
+    """Return the current backend host's platform as 'windows', 'macos', or 'linux'.
+
+    Used at project-creation time to pick sensible defaults so Coder/Reviewer
+    hand commands to the user in the right shell syntax. Stored per project
+    so sharing a codebase across machines doesn't matter — the platform is
+    wherever the project was created.
+    """
+    import sys
+
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"

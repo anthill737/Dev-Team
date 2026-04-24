@@ -117,9 +117,14 @@ class Reviewer:
         cache_creation_total = 0
 
         try:
+            # Read platform fresh each run so user overrides take effect immediately.
+            user_platform = store.read_meta().user_platform
             async for ev in _timeout_wrapped_stream(
                 self._stream_inner(
-                    messages=messages, tools=tools, signal_slot=signal_slot
+                    messages=messages,
+                    tools=tools,
+                    signal_slot=signal_slot,
+                    user_platform=user_platform,
                 ),
                 timeout_seconds=self._wall_clock,
             ):
@@ -190,12 +195,13 @@ class Reviewer:
         messages: list[Message],
         tools: list,
         signal_slot: dict,
+        user_platform: str,
     ) -> AsyncIterator[StreamEvent]:
         """Run the APIRunner stream; short-circuit once submit_review fires."""
         async for ev in self._runner.stream(
             role="reviewer",
             model=self._model,
-            system_prompt=reviewer_prompt(),
+            system_prompt=reviewer_prompt(user_platform=user_platform),
             messages=messages,
             tools=tools,
             max_tokens=16000,  # Reviews are mostly reading, not writing

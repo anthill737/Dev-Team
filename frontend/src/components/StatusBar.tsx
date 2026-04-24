@@ -35,6 +35,22 @@ interface Props {
    *  "Add more work" button in the status bar. */
   onAddWork?: () => void;
   addingWork?: boolean;
+  /** Pause/resume during execution. Pause takes effect between tasks — the
+   *  currently-running Coder or Reviewer will finish first, then the loop halts.
+   *  Close the backend window for a hard stop that doesn't wait. */
+  onPause?: () => void;
+  pausing?: boolean;
+  onResumePaused?: () => void;
+  resumingPaused?: boolean;
+  /** Open the settings modal (name, path, budgets, OS, etc). Gear button appears
+   *  whenever this callback is provided. Safe in any project state — the modal
+   *  itself gates dangerous edits (like root_path while running). */
+  onOpenSettings?: () => void;
+  /** Force-submit the current plan.md for user approval — backup for when the
+   *  Architect is stuck logging 'handing off' without calling request_approval.
+   *  Only shown when project is in INTERVIEW state. */
+  onForceSubmitPlan?: () => void;
+  forceSubmittingPlan?: boolean;
 }
 
 type StatusMode = "active" | "waiting" | "idle" | "error";
@@ -56,6 +72,13 @@ export function StatusBar({
   resumingExecution,
   onAddWork,
   addingWork,
+  onPause,
+  pausing,
+  onResumePaused,
+  resumingPaused,
+  onOpenSettings,
+  onForceSubmitPlan,
+  forceSubmittingPlan,
 }: Props) {
   const s = computeStatus(project, agentStreaming, agentCurrentActivity, blockedReason);
 
@@ -107,6 +130,53 @@ export function StatusBar({
           title="Reopen this project to add a new feature, fix, or refactor. The Architect will interview you about the incremental work and append a new phase to the plan."
         >
           {addingWork ? "Opening..." : "Add more work"}
+        </button>
+      )}
+      {(project?.status === "executing" ||
+        project?.status === "dispatching" ||
+        project?.status === "awaiting_task_review") &&
+        onPause && (
+          <button
+            type="button"
+            onClick={onPause}
+            disabled={pausing}
+            className="shrink-0 px-3 py-1 text-xs font-medium bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white rounded"
+            title="Pause between tasks. The currently running Coder or Reviewer will finish first, then the loop halts. Close the backend window for a hard stop."
+          >
+            {pausing ? "Pausing..." : "Pause"}
+          </button>
+        )}
+      {project?.status === "paused" && onResumePaused && (
+        <button
+          type="button"
+          onClick={onResumePaused}
+          disabled={resumingPaused}
+          className="shrink-0 px-3 py-1 text-xs font-medium bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded"
+          title="Resume the execution loop. It picks up at the next task."
+        >
+          {resumingPaused ? "Resuming..." : "Resume"}
+        </button>
+      )}
+      {project?.status === "interview" && onForceSubmitPlan && (
+        <button
+          type="button"
+          onClick={onForceSubmitPlan}
+          disabled={forceSubmittingPlan}
+          className="shrink-0 px-3 py-1 text-xs font-medium bg-orange-800 hover:bg-orange-700 disabled:opacity-50 text-white rounded"
+          title="If the Architect is stuck logging 'handing off' without calling request_approval, this bypasses it and submits whatever's in plan.md for your approval. Requires plan.md to have content — edit it manually first if needed."
+        >
+          {forceSubmittingPlan ? "Submitting..." : "Force submit plan"}
+        </button>
+      )}
+      {onOpenSettings && (
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="shrink-0 px-2 py-1 text-sm text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+          title="Project settings — name, path, budgets, OS. Safe to open any time."
+          aria-label="Open project settings"
+        >
+          ⚙
         </button>
       )}
     </div>

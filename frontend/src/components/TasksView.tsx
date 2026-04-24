@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { updateTask } from "../lib/api";
 import type { ProjectDetail, Task } from "../lib/types";
 import type { ToolEvent } from "../hooks/useArchitectStream";
 
@@ -8,6 +9,10 @@ interface Props {
   dispatcherRunning: boolean;
   dispatcherActivity: ToolEvent[];
   dispatcherError: string | null;
+  // Called after any task edit so the parent re-fetches tasks + project state.
+  // Optional so existing parents that haven't wired it don't break; when
+  // absent, edits still succeed but the UI won't refresh until the next poll.
+  onTasksChanged?: () => void;
 }
 
 export function TasksView({
@@ -16,6 +21,7 @@ export function TasksView({
   dispatcherRunning,
   dispatcherActivity,
   dispatcherError,
+  onTasksChanged,
 }: Props) {
   const currentPhase = project?.current_phase;
   const phaseTasks = currentPhase
@@ -58,7 +64,12 @@ export function TasksView({
         )}
 
         {phaseTasks.map((task) => (
-          <TaskCard key={task.id} task={task} />
+          <TaskCard
+            key={task.id}
+            task={task}
+            projectId={project?.id || null}
+            onChanged={onTasksChanged}
+          />
         ))}
 
         {otherTasks.length > 0 && (
@@ -68,7 +79,12 @@ export function TasksView({
             </summary>
             <div className="mt-2 space-y-2 opacity-70">
               {otherTasks.map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  projectId={project?.id || null}
+                  onChanged={onTasksChanged}
+                />
               ))}
             </div>
           </details>
@@ -101,8 +117,65 @@ function DispatcherLiveStatus({ activity }: { activity: ToolEvent[] }) {
   );
 }
 
-function TaskCard({ task }: { task: Task }) {
+function TaskCard({
+  task,
+  projectId,
+  onChanged,
+}: {
+  task: Task;
+  projectId: string | null;
+  onChanged?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [budget, setBudget] = useState<string>(String(task.budget_tokens));
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // When the task changes (refresh after edit), keep the budget field in sync
+  // so users see the latest value next time they open the editor.
+  const resetEditState = () => {
+    setBudget(String(task.budget_tokens));
+    setNote("");
+    setError(null);
+  };
+
+  const submitEdit = async (options: { interrupt?: boolean } = {}) => {
+    if (!projectId) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const args: { budget_tokens?: number; add_note?: string; interrupt?: boolean } = {};
+      const b = Number(budget);
+      if (Number.isFinite(b) && b > 0 && b !== task.budget_tokens) {
+        args.budget_tokens = b;
+      }
+      if (note.trim()) {
+        args.add_note = note.trim();
+      }
+      // Only send interrupt when there's a note to go with it — the backend
+      // ignores naked interrupts anyway, but no point sending the flag without
+      // a reason.
+      if (options.interrupt && args.add_note) {
+        args.interrupt = true;
+      }
+      if (!args.budget_tokens && !args.add_note) {
+        setEditing(false);
+        setSubmitting(false);
+        return;
+      }
+      await updateTask(projectId, task.id, args);
+      onChanged?.();
+      setEditing(false);
+      setNote("");  // clear note after successful send; keep budget showing new value
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="bg-panel border border-line rounded p-3">
       <button
@@ -161,6 +234,125 @@ function TaskCard({ task }: { task: Task }) {
             <span>Budget: {task.budget_tokens.toLocaleString()} tokens</span>
             {task.iterations > 0 && <span>Iterations: {task.iterations}</span>}
           </div>
+
+          {/* User notes — previously-added notes show here so the user can see
+              what's already attached without opening the editor. Only shows
+              entries prefixed "User note:" (same prefix the backend applies),
+              not Coder-iteration notes. */}
+          {(() => {
+            const userNotes = (task.notes || []).filter((n) =>
+              n.startsWith("User note:"),
+            );
+            if (userNotes.length === 0) return null;
+            return (
+              <div className="pt-2 border-t border-line/60">
+                <div className="text-amber-500/80 mb-1 font-medium">
+                  Your notes ({userNotes.length})
+                </div>
+                <ul className="space-y-1">
+                  {userNotes.map((n, i) => (
+                    <li
+                      key={i}
+                      className="text-amber-200/80 bg-amber-950/20 border border-amber-900/30 rounded px-2 py-1"
+                    >
+                      {n.replace(/^User note:\s*/, "")}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
+
+          {/* Edit controls — only for non-done tasks with a projectId available. */}
+          {task.status !== "done" && projectId && (
+            <div className="pt-2 border-t border-line/60">
+              {!editing ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    resetEditState();
+                    setEditing(true);
+                  }}
+                  className="text-xs text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded px-2 py-1"
+                  title="Edit this task's budget or add a note the Coder will see on next iteration."
+                >
+                  ⚙ Settings
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-gray-500 mb-0.5">Budget (tokens)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={budget}
+                      onChange={(e) => setBudget(e.target.value)}
+                      className="w-full bg-ink border border-line rounded px-2 py-1 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-gray-500 mb-0.5">
+                      Append a note for the Coder (optional)
+                    </label>
+                    <textarea
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. try using the react-query library"
+                      className="w-full bg-ink border border-line rounded px-2 py-1 text-xs"
+                    />
+                  </div>
+                  {error && (
+                    <div className="text-red-400 bg-red-950/40 border border-red-900/50 rounded px-2 py-1">
+                      {error}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditing(false);
+                      }}
+                      disabled={submitting}
+                      className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        submitEdit({ interrupt: true });
+                      }}
+                      disabled={submitting || !note.trim()}
+                      className="text-xs bg-red-800 hover:bg-red-700 text-white font-medium px-2 py-1 rounded disabled:opacity-40"
+                      title={
+                        !note.trim()
+                          ? "Add a note first — interrupt needs a message."
+                          : "Pauses execution and surfaces this task for you to respond. Needs a note."
+                      }
+                    >
+                      {submitting ? "…" : "Save & interrupt"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        submitEdit();
+                      }}
+                      disabled={submitting}
+                      className="text-xs bg-accent hover:bg-amber-400 text-black font-medium px-2 py-1 rounded disabled:opacity-40"
+                      title="Save the note/budget. The Coder picks it up on its next iteration — execution continues."
+                    >
+                      {submitting ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

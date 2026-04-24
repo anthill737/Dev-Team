@@ -50,10 +50,12 @@ class ProjectMeta:
     current_phase: str | None = None
     phases: list[ProjectPhase] = field(default_factory=list)
 
-    # Budgets — set during setup, enforced by orchestrator
-    project_token_budget: int = 4_000_000
+    # Budgets — set during setup, enforced by orchestrator. These defaults
+    # only apply if meta.json is missing a field (old projects before we
+    # started writing them). New projects get values from config.Settings.
+    project_token_budget: int = 5_000_000
     default_task_token_budget: int = 150_000
-    max_task_iterations: int = 5
+    max_task_iterations: int = 8
     max_wall_clock_seconds: int | None = None  # None = run until done
 
     # Running totals
@@ -82,6 +84,15 @@ class ProjectMeta:
     cache_creation_sonnet: int = 0
     cache_read_haiku: int = 0
     cache_creation_haiku: int = 0
+
+    # The OS the user is on — baked into Coder/Reviewer prompts so commands
+    # they hand to the user (review_run_command, task notes) use the right
+    # syntax. Values: "windows", "macos", "linux". Defaults to "linux" for
+    # old projects that predate this field; the recovery code in projects.py
+    # auto-fills it from the current backend host the first time such a
+    # project is accessed. NEW projects are initialized from the backend's
+    # detected platform at creation time.
+    user_platform: str = "linux"
 
 
 @dataclass

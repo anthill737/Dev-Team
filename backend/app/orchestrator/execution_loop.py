@@ -112,6 +112,15 @@ class ExecutionLoop:
             )
 
             if decision.kind == SchedulerDecisionKind.PROJECT_COMPLETE:
+                # Mark the current phase done too — PROJECT_COMPLETE fires
+                # instead of PHASE_COMPLETE on the final phase, so we need to
+                # close it out here. Without this, add-work after completion
+                # sees the last phase in 'active' state, tries to reset and
+                # re-dispatch it, and collides with the already-completed
+                # tasks for that phase. (This was the NOTES-APP bug.)
+                for p in meta.phases:
+                    if p.id == meta.current_phase:
+                        p.status = "done"
                 meta.status = ProjectStatus.COMPLETE
                 self.store.write_meta(meta)
                 await self.store.append_decision(
@@ -121,11 +130,93 @@ class ExecutionLoop:
                 return
 
             if decision.kind == SchedulerDecisionKind.PHASE_COMPLETE:
-                meta.status = ProjectStatus.PHASE_REVIEW
-                # Mark the current phase done in meta.phases
+                # Mark the current phase done.
                 for p in meta.phases:
                     if p.id == meta.current_phase:
                         p.status = "done"
+
+                # Auto-advance to the next phase if plan.md has one. This
+                # skips the old "bounce back to user / Architect" flow, which
+                # was unnecessary — the Architect's job is *planning* phases;
+                # *executing* them through the plan is Dispatcher territory.
+                # The Architect only needs to come back if the plan itself
+                # needs changes.
+                #
+                # If no next phase exists in plan.md, fall through to
+                # PHASE_REVIEW (the user or scheduler will handle it — this
+                # is the "plan had 1 phase and you finished it" scenario;
+                # in practice the scheduler's PROJECT_COMPLETE branch catches
+                # that before we get here, but keep the fallback as a safety).
+                next_phase_id: str | None = None
+                try:
+                    from .phases import parse_phases as _parse_phases
+
+                    plan_text = self.store.read_plan()
+                    parsed = _parse_phases(plan_text)
+                    # Build a map of what meta.phases says is done. Next phase
+                    # is the lowest-numbered parsed phase whose id isn't done.
+                    done_ids = {p.id for p in meta.phases if p.status == "done"}
+                    for pp in parsed:
+                        if pp.id not in done_ids:
+                            next_phase_id = pp.id
+                            break
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to parse plan.md for auto-advance; falling "
+                        "back to PHASE_REVIEW."
+                    )
+                    next_phase_id = None
+
+                if next_phase_id is not None:
+                    # Ensure the phase row exists in meta.phases (old projects
+                    # whose phases list may be out of sync with plan.md).
+                    existing = next(
+                        (p for p in meta.phases if p.id == next_phase_id), None
+                    )
+                    if existing is None:
+                        from ..state.store import ProjectPhase
+
+                        parsed_match = next(
+                            (p for p in parsed if p.id == next_phase_id), None
+                        )
+                        meta.phases.append(
+                            ProjectPhase(
+                                id=next_phase_id,
+                                title=(
+                                    parsed_match.title if parsed_match else next_phase_id
+                                ),
+                                status="active",
+                                approved_by_user=True,  # plan was already approved
+                            )
+                        )
+                    else:
+                        existing.status = "active"
+                        existing.approved_by_user = True
+
+                    meta.current_phase = next_phase_id
+                    meta.status = ProjectStatus.DISPATCHING
+                    self.store.write_meta(meta)
+                    await self.store.append_decision(
+                        {
+                            "actor": "orchestrator",
+                            "kind": "phase_complete",
+                            "phase": decision.phase_id if hasattr(decision, "phase_id") else None,
+                            "auto_advance_to": next_phase_id,
+                        }
+                    )
+                    yield _event(
+                        "phase_auto_advance",
+                        from_phase=decision.phase_id if hasattr(decision, "phase_id") else None,
+                        to_phase=next_phase_id,
+                    )
+                    # Exit the execution loop so the outer stream_execution_loop
+                    # can re-enter the DISPATCHING path and actually invoke the
+                    # Dispatcher for the new phase. This is the only way to
+                    # avoid duplicating the Dispatcher-launch logic inline here.
+                    return
+
+                # No next phase in plan → halt for user review.
+                meta.status = ProjectStatus.PHASE_REVIEW
                 self.store.write_meta(meta)
                 await self.store.append_decision(
                     {
@@ -179,7 +270,13 @@ class ExecutionLoop:
 
                 # Budget enforcement BEFORE running: if we can't afford another task, stop.
                 remaining = meta.project_token_budget - meta.tokens_used
-                task_budget = min(task.get("budget_tokens", 50_000), remaining)
+                # Fall back to the project's configured default if the task
+                # somehow has no budget — avoids a hidden hardcoded floor that
+                # silently overrode user settings.
+                task_budget = min(
+                    task.get("budget_tokens", meta.default_task_token_budget),
+                    remaining,
+                )
                 if task_budget <= 0:
                     meta.status = ProjectStatus.BLOCKED
                     self.store.write_meta(meta)
@@ -413,6 +510,12 @@ class ExecutionLoop:
                         },
                     )
                     meta.tasks_completed += 1
+
+                    # Clean up Reviewer's scratch directory for this task. It's
+                    # per-task so nothing useful survives and leftover scripts
+                    # would clutter the project dir the user sees.
+                    self._cleanup_review_scratch(task["id"])
+
                     await self.store.append_decision(
                         {
                             "actor": "orchestrator",
@@ -527,6 +630,25 @@ class ExecutionLoop:
                 changed = True
         if changed:
             self.store.write_tasks(tasks)
+
+    def _cleanup_review_scratch(self, task_id: str) -> None:
+        """Delete the Reviewer's scratch directory for a completed task.
+
+        Failures here never block the task from being marked done — scratch files
+        leftover is a cosmetic issue, not a correctness one. Logs a warning if
+        something goes wrong so the cause is diagnosable.
+        """
+        import shutil
+        from pathlib import Path
+
+        scratch = Path(self.store.root) / ".devteam" / "review-scratch" / task_id
+        try:
+            if scratch.exists() and scratch.is_dir():
+                shutil.rmtree(scratch)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to clean review scratch for task %s: %s", task_id, exc
+            )
 
 
 def _event(kind: str, **payload) -> StreamEvent:

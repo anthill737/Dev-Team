@@ -102,6 +102,10 @@ export async function pauseProject(id: string): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/api/projects/${id}/pause`, { method: "POST" });
 }
 
+export async function resumePausedProject(id: string): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/api/projects/${id}/resume`, { method: "POST" });
+}
+
 export async function retryDispatcher(id: string): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/api/projects/${id}/retry_dispatcher`, {
     method: "POST",
@@ -118,6 +122,89 @@ export async function addWork(id: string): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/api/projects/${id}/add_work`, {
     method: "POST",
   });
+}
+
+// Backup for Architect-stuck situations: force plan.md into AWAIT_APPROVAL
+// without waiting for the Architect to call request_approval. Use this when
+// the Architect is caught in a handoff-narration loop. Backend refuses if the
+// project isn't in INTERVIEW or plan.md is effectively empty.
+export async function forceSubmitPlan(id: string): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/api/projects/${id}/force_submit_plan`, {
+    method: "POST",
+  });
+}
+
+// Delete a project. `purge` controls whether to also remove the project's
+// .devteam/ state folder. User code outside .devteam/ is NEVER touched.
+// Backend refuses to delete a project with a running execution job.
+export async function deleteProject(
+  id: string,
+  purge: boolean = false,
+): Promise<void> {
+  await request<unknown>(
+    `/api/projects/${id}?purge=${purge ? "true" : "false"}`,
+    { method: "DELETE" },
+  );
+}
+
+// Partial update of project settings. Only fields explicitly included are
+// applied; omitted fields stay as-is. Use `clear_max_wall_clock: true` to
+// flip wall clock from a limit back to "unlimited".
+//
+// root_path changes have stricter rules: project must not be running, and
+// the new path must already have .devteam/meta.json matching this project id.
+export interface ProjectUpdateArgs {
+  name?: string;
+  root_path?: string;
+  project_token_budget?: number;
+  default_task_token_budget?: number;
+  max_task_iterations?: number;
+  max_wall_clock_seconds?: number;
+  clear_max_wall_clock?: boolean;
+  user_platform?: "windows" | "macos" | "linux";
+}
+
+export async function updateProject(
+  id: string,
+  args: ProjectUpdateArgs,
+): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/api/projects/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(args),
+  });
+}
+
+// Edit a single task. Safe to call while the task is running — the Coder
+// re-reads the task at the start of each iteration, so budget bumps or
+// appended notes take effect on the next iteration.
+//
+// `interrupt`: when paired with add_note, halts the execution loop at the
+// task boundary and surfaces the note as a user-review moment. Use for
+// "stop and show me X" notes the Coder shouldn't just pick up passively.
+export async function updateTask(
+  projectId: string,
+  taskId: string,
+  args: { budget_tokens?: number; add_note?: string; interrupt?: boolean },
+): Promise<Task> {
+  return request<Task>(`/api/projects/${projectId}/tasks/${taskId}`, {
+    method: "PATCH",
+    body: JSON.stringify(args),
+  });
+}
+
+// Apply a new budget to every non-done task in one call. Useful when the
+// user realizes mid-project that defaults were too low.
+export async function bulkUpdateTaskBudget(
+  projectId: string,
+  budgetTokens: number,
+): Promise<{ updated: number; task_ids: string[] }> {
+  return request<{ updated: number; task_ids: string[] }>(
+    `/api/projects/${projectId}/tasks/bulk_budget`,
+    {
+      method: "POST",
+      body: JSON.stringify({ budget_tokens: budgetTokens }),
+    },
+  );
 }
 
 export async function reviewTask(

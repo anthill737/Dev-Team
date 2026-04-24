@@ -1,8 +1,4 @@
-# # Test projects and any nested dev projects — NEVER commit these
-DEV-TEAM-TESTS/
-**/.devteam/
-**/node_modules/
-============================================================================
+# ============================================================================
 # CRITICAL: .devteam-run/ contains your Anthropic API key.
 # Never remove this line from .gitignore. If you accidentally commit it,
 # rotate the key at console.anthropic.com immediately.

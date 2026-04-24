@@ -36,6 +36,20 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
   const filesToCheck = task.review_files_to_check ?? [];
   const summary = task.review_summary ?? "";
 
+  // Interrupt mode: the user hit "Save & interrupt" on the task, which halted
+  // execution and landed here. Coder-review fields (checklist, run command,
+  // summary) are irrelevant — there's no Coder work to verify. What IS
+  // relevant is the user's own note and the options to resume or send
+  // feedback. Rendered via a distinct branch so we don't try to cram both
+  // cases into one layout.
+  const isInterrupt = task.interrupted_by_user === true;
+  const userNotes = (task.notes || []).filter((n) => n.startsWith("User note:"));
+  // The latest user note is the one that triggered the interrupt — most
+  // relevant to surface at the top.
+  const latestNote = userNotes.length > 0
+    ? userNotes[userNotes.length - 1].replace(/^User note:\s*/, "")
+    : "";
+
   const allChecked =
     checklist.length > 0 && checkedItems.size === checklist.length;
 
@@ -87,6 +101,118 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
       setSubmitting(false);
     }
   };
+
+  if (isInterrupt) {
+    // Interrupt panel: user hit "Save & interrupt" on a task. Show their note
+    // front and center. Two actions:
+    //   - Resume (replaces Approve): sends approved=true; backend resets task
+    //     to pending and resumes the Coder with the note visible in next
+    //     read_task. Task is NOT marked done — it wasn't actually finished.
+    //   - Send changes (replaces Needs changes): same reject flow, user's
+    //     feedback goes into task.notes and Coder retries.
+    return (
+      <div className="border-b-2 border-red-600/70 bg-red-950/20">
+        <div className="px-4 py-3 flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2 mb-2">
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-red-300">
+                Execution paused — you interrupted this task
+              </span>
+              <span className="text-xs font-mono text-gray-400">{task.id}</span>
+              <span className="text-xs text-gray-200 truncate">{task.title}</span>
+            </div>
+
+            {latestNote && (
+              <div className="mb-3">
+                <div className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1">
+                  Your note
+                </div>
+                <div className="text-sm text-amber-100 bg-amber-950/40 border border-amber-900/50 rounded px-3 py-2 whitespace-pre-wrap">
+                  {latestNote}
+                </div>
+              </div>
+            )}
+
+            <div className="text-xs text-gray-400 mb-2">
+              Resume to send the Coder back to this task (your note is visible
+              in the task's notes — the Coder will see it on its next iteration).
+              Or send additional feedback to guide the rework.
+            </div>
+
+            {showRejectForm && (
+              <div className="mt-3 p-2 border border-line rounded bg-black/30">
+                <label
+                  htmlFor="interrupt-feedback"
+                  className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1"
+                >
+                  Additional feedback for the Coder
+                </label>
+                <textarea
+                  id="interrupt-feedback"
+                  value={feedback}
+                  onChange={(e) => setFeedback(e.target.value)}
+                  placeholder="e.g., Actually, also make sure X, and avoid approach Y."
+                  rows={3}
+                  className="w-full text-xs bg-black/50 border border-line rounded px-2 py-1.5 text-gray-200 font-mono"
+                  disabled={submitting}
+                />
+              </div>
+            )}
+
+            {error && <div className="mt-2 text-xs text-red-400">{error}</div>}
+          </div>
+
+          {/* Action buttons — different labels for interrupt context */}
+          <div className="flex flex-col gap-1.5 shrink-0 w-36">
+            {!showRejectForm ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  disabled={submitting}
+                  className="px-3 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded disabled:opacity-50"
+                  title="Send the Coder back to this task. Your note is in the task's notes; the Coder will see it on its next iteration."
+                >
+                  {submitting ? "..." : "Resume Coder"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRejectForm(true)}
+                  disabled={submitting}
+                  className="px-3 py-2 text-xs bg-amber-800/80 hover:bg-amber-700/90 text-amber-100 rounded disabled:opacity-50"
+                  title="Add more feedback before the Coder retries."
+                >
+                  Add more feedback
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleReject}
+                  disabled={submitting || !feedback.trim()}
+                  className="px-3 py-2 text-xs font-semibold bg-amber-700 hover:bg-amber-600 text-white rounded disabled:opacity-50"
+                >
+                  {submitting ? "..." : "Send feedback"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRejectForm(false);
+                    setFeedback("");
+                  }}
+                  disabled={submitting}
+                  className="px-3 py-2 text-xs bg-gray-800 hover:bg-gray-700 text-gray-200 rounded disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="border-b-2 border-amber-600/70 bg-amber-950/20">
