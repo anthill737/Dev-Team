@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   decidePlan,
   getDecisions,
@@ -484,50 +485,69 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         }}
       />
 
-      {/* Three-column workspace. Tracks are locked with minmax(0, ...) so
-          content inside a column can NEVER expand it — long URLs, JSON tool
-          inputs, big code blocks all stay inside their column and overflow
-          there (scroll or wrap), instead of pushing the column wider and
-          squashing siblings.
+      {/* Resizable workspace. Three columns split by drag handles, plus an
+          inner vertical split inside the left column when the live-execution
+          panel is visible. Each PanelGroup has an autoSaveId keyed to the
+          project ID so layouts persist per-project across sessions.
 
-          Why this matters: the previous `grid-cols-[2fr_2fr_1fr]` (without
-          minmax) lets CSS grid use intrinsic content size as the minimum
-          per track. A wide tool-call card in the Agents column would push
-          its column wider, eating into the "fr" share of the others. Result:
-          column widths visibly shifted between modes.
-
-          Each column also has min-w-0 so flex/grid children inside honor
-          the track width — a redundant safety since minmax handles it,
-          but cheap and explicit. */}
-      <div
-        className="flex-1 grid min-h-0 divide-x divide-line"
-        style={{
-          gridTemplateColumns: "minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr)",
-        }}
+          Min sizes prevent accidental collapse to nothing — you can squeeze
+          a column down to ~10% of width but no further. The handles
+          themselves are 1px lines with a wider hit area on hover; matches
+          the existing divide-x aesthetic but draggable. */}
+      <PanelGroup
+        direction="horizontal"
+        autoSaveId={`workspace:${projectId}`}
+        className="flex-1 min-h-0"
       >
-        {/* Left column: chat on top, live execution below when relevant */}
-        <div className="flex flex-col min-h-0 min-w-0">
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <ArchitectChat
-              interview={interview}
-              streaming={streaming}
-              partialText={partialText}
-              toolActivity={toolActivity}
-              tokensThisTurn={tokensThisTurn}
-              disabled={!chattable || wsStatus !== "open"}
-              disabledReason={chatDisabledReason}
-              onSend={send}
-              error={error}
-            />
-          </div>
-          {showLiveExecution && (
-            <div className="border-t border-line p-2 max-h-[55%]">
-              <LiveExecution stream={execution} />
+        {/* Left column: Architect chat, with live execution panel below
+            when there's something to show. The inner vertical split is
+            its own PanelGroup so the chat/live-execution heights are
+            independently draggable from the column widths. */}
+        <Panel defaultSize={40} minSize={15} className="flex flex-col min-h-0 min-w-0">
+          {showLiveExecution ? (
+            <PanelGroup
+              direction="vertical"
+              autoSaveId={`workspace-left:${projectId}`}
+            >
+              <Panel defaultSize={55} minSize={20} className="min-h-0 min-w-0 overflow-hidden">
+                <ArchitectChat
+                  interview={interview}
+                  streaming={streaming}
+                  partialText={partialText}
+                  toolActivity={toolActivity}
+                  tokensThisTurn={tokensThisTurn}
+                  disabled={!chattable || wsStatus !== "open"}
+                  disabledReason={chatDisabledReason}
+                  onSend={send}
+                  error={error}
+                />
+              </Panel>
+              <PanelResizeHandle className="h-px bg-line hover:h-1 hover:bg-accent transition-all" />
+              <Panel defaultSize={45} minSize={15} className="min-h-0 min-w-0 p-2 overflow-hidden">
+                <LiveExecution stream={execution} />
+              </Panel>
+            </PanelGroup>
+          ) : (
+            <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+              <ArchitectChat
+                interview={interview}
+                streaming={streaming}
+                partialText={partialText}
+                toolActivity={toolActivity}
+                tokensThisTurn={tokensThisTurn}
+                disabled={!chattable || wsStatus !== "open"}
+                disabledReason={chatDisabledReason}
+                onSend={send}
+                error={error}
+              />
             </div>
           )}
-        </div>
+        </Panel>
 
-        <div className="flex flex-col min-h-0 min-w-0">
+        <PanelResizeHandle className="w-px bg-line hover:w-1 hover:bg-accent transition-all" />
+
+        {/* Center column: plan / tasks tabs */}
+        <Panel defaultSize={40} minSize={15} className="flex flex-col min-h-0 min-w-0">
           <CenterTabs
             activeTab={activeTab}
             onSelect={setCenterTab}
@@ -552,9 +572,12 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
               />
             )}
           </div>
-        </div>
+        </Panel>
 
-        <div className="flex flex-col min-h-0 min-w-0">
+        <PanelResizeHandle className="w-px bg-line hover:w-1 hover:bg-accent transition-all" />
+
+        {/* Right column: agents / decisions / completed tabs */}
+        <Panel defaultSize={20} minSize={10} className="flex flex-col min-h-0 min-w-0">
           <RightTabs
             activeTab={rightTab}
             onSelect={setRightTab}
@@ -570,8 +593,8 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
               <AgentInspector projectId={projectId} />
             )}
           </div>
-        </div>
-      </div>
+        </Panel>
+      </PanelGroup>
 
       {showSettings && project && (
         <EditProjectModal
