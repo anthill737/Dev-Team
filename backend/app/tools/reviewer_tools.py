@@ -444,13 +444,14 @@ def build_reviewer_tools(
         ToolSpec(
             name="submit_review",
             description=(
-                "End the review with your verdict. outcome='approve' when every "
-                "acceptance criterion is met with observable verification and tests "
-                "actually test the behavior. outcome='request_changes' for any "
-                "shortfall — hard threshold, no 'overall good enough despite X'. "
-                "When requesting changes, findings must be specific and actionable: "
-                "'Test in file X at line Y mocks the DB so it doesn't verify criterion Z' "
-                "beats 'tests could be better'. Call this exactly once at the end."
+                "End the review with your verdict. outcome='approve' ONLY when all three "
+                "hard rules are satisfied: (1) zero confirmed defects, (2) tests don't mock "
+                "the thing under test, (3) any runnable artifact has been actually run and "
+                "behaves correctly. outcome='request_changes' for any shortfall — hard "
+                "threshold, no 'overall good enough despite X', no 'minor issue, approve "
+                "with notes'. When requesting changes, findings must be specific and "
+                "actionable: 'Test in file X at line Y mocks the DB so it doesn\\'t verify "
+                "criterion Z' beats 'tests could be better'. Call this exactly once at the end."
             ),
             input_schema={
                 "type": "object",
