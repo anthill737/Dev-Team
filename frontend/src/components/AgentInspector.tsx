@@ -656,6 +656,19 @@ function FlatBlocks({
       // task_start is consumed by the group header; don't render it as a
       // status row inside the body or it duplicates the header.
       continue;
+    } else if (
+      e.kind === "usage" ||
+      e.kind === "turn_complete" ||
+      e.kind === "tool_use_complete"
+    ) {
+      // Low-signal observability events. `usage` is per-call token accounting
+      // that floods the panel between every interesting event. `turn_complete`
+      // and `tool_use_complete` are end-markers — the next event already shows
+      // that the previous one finished. Hiding these by default cuts roughly
+      // half the row count without losing user-relevant information. Token
+      // totals are visible in the status bar; per-call usage doesn't need to
+      // be in the inspector body.
+      continue;
     } else {
       blocks.push({
         kind: "status",
@@ -719,40 +732,55 @@ function BlockView({
 
   if (block.kind === "tool") {
     const inputStr = JSON.stringify(block.input, null, 2);
-    const inputPreview =
-      inputStr.length > 200 ? inputStr.slice(0, 200) + "…" : inputStr;
+    // For the one-line collapsed view, extract the most informative single
+    // value from the tool input. For most of our tools that's a path,
+    // filename, or first argv. Falls back to a compact JSON snippet.
+    const singleLinePreview = (() => {
+      const inp = block.input;
+      if (typeof inp.path === "string") return inp.path;
+      if (typeof inp.filename === "string") return inp.filename;
+      if (Array.isArray(inp.argv) && inp.argv.length > 0) {
+        return inp.argv.slice(0, 3).join(" ") + (inp.argv.length > 3 ? " …" : "");
+      }
+      if (typeof inp.query === "string") {
+        return inp.query.length > 60 ? inp.query.slice(0, 60) + "…" : inp.query;
+      }
+      // Fallback: compact JSON, truncated
+      const compact = JSON.stringify(inp);
+      return compact.length > 80 ? compact.slice(0, 80) + "…" : compact;
+    })();
+
     return (
-      <div className="border border-line/60 rounded bg-black/30 overflow-hidden">
+      // No outer border in collapsed state — the row is dense by design;
+      // borders on every tool call would create visual stripes. The expand
+      // affordance is the chevron + hover background.
+      <div className="rounded overflow-hidden">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="w-full flex items-center justify-between gap-2 px-2 py-1 hover:bg-black/40 text-left"
+          className="w-full flex items-center gap-2 px-2 py-0.5 hover:bg-black/30 text-left"
         >
-          <div className="flex items-center gap-2 min-w-0">
-            {showAgentBadge && <AgentBadge agent={block.agent} />}
-            <span className="text-cyan-400 shrink-0">⚙</span>
-            <span className="text-cyan-300 font-semibold truncate">
-              {block.name}
-            </span>
-            {block.taskId && (
-              <span className="text-[13px] text-gray-500 shrink-0">
-                {block.taskId}
-              </span>
-            )}
-          </div>
-          <span className="text-gray-500 text-[13px]">
+          <span className="text-gray-500 shrink-0 text-[13px] w-3">
             {expanded ? "▾" : "▸"}
           </span>
+          {showAgentBadge && <AgentBadge agent={block.agent} />}
+          <span className="text-cyan-300 font-semibold shrink-0 text-[14px]">
+            {block.name}
+          </span>
+          <span
+            className="text-[13px] text-gray-400 truncate min-w-0"
+            style={{ overflowWrap: "anywhere" }}
+          >
+            {singleLinePreview}
+          </span>
+          {block.result?.isError && (
+            <span className="text-[12px] text-red-400 shrink-0">error</span>
+          )}
         </button>
-        {!expanded && (
-          <div className="px-2 pb-1 text-[13px] text-gray-500 truncate">
-            {inputPreview}
-          </div>
-        )}
         {expanded && (
-          <div className="px-2 pb-2 space-y-1.5">
+          <div className="px-3 pb-2 pt-1 space-y-1.5 border-l-2 border-line/40 ml-3">
             <div>
-              <div className="text-[13px] uppercase tracking-wider text-gray-500 mt-1">
+              <div className="text-[12px] uppercase tracking-wider text-gray-500">
                 Input
               </div>
               <pre className="text-[13px] text-gray-300 bg-black/40 rounded px-2 py-1 overflow-x-auto">
@@ -761,7 +789,7 @@ function BlockView({
             </div>
             {block.result && (
               <div>
-                <div className="text-[13px] uppercase tracking-wider text-gray-500">
+                <div className="text-[12px] uppercase tracking-wider text-gray-500">
                   Result {block.result.isError && "(error)"}
                 </div>
                 <pre
