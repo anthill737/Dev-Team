@@ -13,13 +13,16 @@ This is a personal tool — local web app, bring-your-own Anthropic API key, no 
 5. **Review.** For tasks flagged `requires_review`, a skeptical Reviewer (Opus) verifies the Coder's work before it's marked done. Finds bugs, rejects with specific findings, sends back to Coder. Max 2 review cycles before blocking for you.
 6. **Iterate.** When a project completes, you can "Add more work" — the Architect interviews you about additions, appends a new phase to the plan, and the loop continues.
 
+Architecture inspiration: [Anthropic's harness design paper](https://www.anthropic.com/engineering/harness-design-long-running-apps) — separating generation from evaluation, skeptical evaluator, conditional review.
 
 ## Requirements
 
 - Windows 10/11 (tested) — launcher scripts are PowerShell; adaptable to Unix but not yet done
 - Python 3.11+
 - Node.js 20+
-- An Anthropic API key (enter it in the app on first run; stored locally at `.devteam-run/api_key`)
+- **One of the following auth options:**
+  - **Recommended — Claude Code subscription.** Install the `claude` CLI (`npm install -g @anthropic-ai/claude-code` or `curl -fsSL https://claude.ai/install.sh | bash`), then run `claude` once and log in with your Pro/Max account. Dev Team uses your subscription quota — no per-token billing. This is the default mode.
+  - **Alternative — Anthropic API key.** Set `DEVTEAM_RUNNER=api` in your `.env` and paste your `sk-ant-...` key in the app on first run. Pay-per-token billing.
 
 ## Setup
 
@@ -38,7 +41,31 @@ Then launch with:
 
 Two windows open: backend on port 8765, frontend on port 3939. Your browser opens to the frontend automatically. Close either window to stop it.
 
-On first launch, paste your Anthropic API key when prompted. Get one at console.anthropic.com.
+On first launch in **claude_code** mode (the default), if your `claude` CLI is logged in, you'll go straight to the projects screen. The startup banner in the backend window confirms which mode is active. If `claude` isn't authenticated, the first agent action will fail with a clear error — run `claude` interactively once and log in.
+
+On first launch in **api** mode, paste your Anthropic API key when prompted. Get one at console.anthropic.com.
+
+## Runner modes
+
+Dev Team supports two billing modes, controlled by `DEVTEAM_RUNNER` in `.env`:
+
+| Mode | Default | Auth | Billing |
+|---|---|---|---|
+| `claude_code` | ✓ | `claude` CLI subscription | Counts against your Pro/Max plan |
+| `api` | | Anthropic API key | Pay-per-token |
+
+**To use Claude Code subscription (default):**
+1. Install: `npm install -g @anthropic-ai/claude-code` (or the install script)
+2. Authenticate: run `claude` and log in. (Or `claude setup-token` for an OAuth token usable in headless setups.)
+3. That's it — no env var needed; `claude_code` is the default.
+
+**To use API billing instead:**
+1. Add `DEVTEAM_RUNNER=api` to `.env`
+2. Set `ANTHROPIC_API_KEY=sk-ant-...` in `.env` or paste it in the UI on first run.
+
+The backend's startup log prints a banner stating which mode is active. If you switch modes, restart the backend to pick up the change.
+
+**Trade-off:** in `claude_code` mode, each agent invocation spawns a `claude` subprocess (~2-3 second cold start per call) and uses your subscription quota (5-hour rolling window). The API mode has near-instant calls but bills per token.
 
 ## What's in the repo
 
@@ -53,7 +80,7 @@ dev-team/
 │   │   ├── sandbox/       Process-based sandbox for executing code
 │   │   ├── state/         Per-project filesystem-backed state store
 │   │   └── tools/         Tool definitions each agent can call
-│   └── tests/             134 pytest tests
+│   └── tests/             205 pytest tests
 ├── frontend/         Vite + React + TypeScript + Tailwind
 │   ├── src/
 │   │   ├── components/    Main workspace, chat, task panels, live stream

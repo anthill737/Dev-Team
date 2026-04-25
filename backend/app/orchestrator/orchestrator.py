@@ -11,7 +11,6 @@ import logging
 from dataclasses import dataclass
 from typing import AsyncIterator
 
-from ..agents.api_runner import APIRunner
 from ..agents.base import (
     AgentRunner,
     ContentBlock,
@@ -124,7 +123,12 @@ class Orchestrator:
             # (the plan write, ~3-5k tokens in practice). Opus 4.7 supports up to
             # 128k but there's no benefit — the model stops when it's done.
             max_tokens=32000,
-            max_iterations=12,
+            # Bumped from 12 to 25 because Claude Code's max_turns semantic may
+            # count differently than our APIRunner did (each tool call vs each
+            # model invocation). 25 is safely above any realistic Architect
+            # turn count and prevents premature truncation of the
+            # write_plan → request_approval sequence.
+            max_iterations=25,
         ):
             if event.kind == "text_delta":
                 collected_text.append(event.payload.get("text", ""))

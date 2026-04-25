@@ -148,16 +148,51 @@ def test_retry_dispatcher_http_409_when_not_blocked() -> None:
 
 def test_bootstrap_api_key_loads_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     """When ANTHROPIC_API_KEY is set, startup should pre-populate the session store
-    so the user doesn't have to enter it in the UI."""
+    so the user doesn't have to enter it in the UI.
+
+    Pinned to runner=api because in claude_code mode the bootstrap deliberately
+    skips loading the key — that path has its own test below.
+    """
     from app.main import _bootstrap_api_key_from_env
     from app.api.session import _store as session_store
+    from app.config import get_settings
 
     session_store.clear()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-1234567890")
-    _bootstrap_api_key_from_env()
-    assert session_store.has() is True
-    assert session_store.get() == "sk-ant-test-key-1234567890"
+    # Override runner on the cached singleton settings for this test. The
+    # regex validator will reject anything other than claude_code|api.
+    settings = get_settings()
+    original_runner = settings.runner
+    settings.runner = "api"
+    try:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-1234567890")
+        _bootstrap_api_key_from_env()
+        assert session_store.has() is True
+        assert session_store.get() == "sk-ant-test-key-1234567890"
+    finally:
+        settings.runner = original_runner
+        session_store.clear()
+
+
+def test_bootstrap_skips_loading_key_in_claude_code_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In claude_code mode, the API key is ignored — loading it would give a
+    misleading 'authenticated' state in the UI even though the key is never used."""
+    from app.main import _bootstrap_api_key_from_env
+    from app.api.session import _store as session_store
+    from app.config import get_settings
+
     session_store.clear()
+    settings = get_settings()
+    original_runner = settings.runner
+    settings.runner = "claude_code"
+    try:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-should-be-ignored")
+        _bootstrap_api_key_from_env()
+        assert session_store.has() is False  # not loaded
+    finally:
+        settings.runner = original_runner
+        session_store.clear()
 
 
 def test_bootstrap_api_key_ignores_missing_env_var(monkeypatch: pytest.MonkeyPatch) -> None:

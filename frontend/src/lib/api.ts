@@ -36,8 +36,17 @@ export async function setApiKey(apiKey: string): Promise<void> {
   });
 }
 
-export async function sessionStatus(): Promise<{ has_key: boolean }> {
-  return request<{ has_key: boolean }>("/api/session/status");
+export interface SessionStatus {
+  has_key: boolean;
+  // Which agent runner the backend uses. "claude_code" means the user's
+  // subscription via Claude Code CLI (no API key required); "api" means
+  // per-token billing via Anthropic API key.
+  runner: "claude_code" | "api";
+  runner_description: string;
+}
+
+export async function sessionStatus(): Promise<SessionStatus> {
+  return request<SessionStatus>("/api/session/status");
 }
 
 export async function clearApiKey(): Promise<void> {

@@ -31,6 +31,36 @@ def _registry_path() -> Path:
     return Path(get_settings().projects_registry_path)
 
 
+def _build_runner(store: ProjectStore):
+    """Construct the active AgentRunner based on the backend's configured runner.
+
+    Centralized so every endpoint that needs an orchestrator uses the same selection
+    logic — swapping the runner at deploy time is one env-var change. Import both
+    runner modules lazily to avoid pulling in claude-agent-sdk on startup when the
+    API runner is active (or vice versa).
+
+    When runner==claude_code, we do NOT attempt to read an API key. The key may
+    still be in the environment (user forgot to remove it), but we want it to be
+    strictly ignored so there's no chance of accidental billing.
+    """
+    settings = get_settings()
+    if settings.runner == "claude_code":
+        from ..agents.claude_code_runner import ClaudeCodeRunner
+
+        logger.debug("Building ClaudeCodeRunner (cwd=%s)", store.root)
+        return ClaudeCodeRunner(cwd=str(store.root))
+    elif settings.runner == "api":
+        from ..agents.api_runner import APIRunner
+
+        logger.debug("Building APIRunner")
+        return APIRunner(api_key=get_api_key())
+    else:
+        raise RuntimeError(
+            f"Unknown runner setting: {settings.runner!r} "
+            f"(expected 'claude_code' or 'api')"
+        )
+
+
 def _load_registry() -> list[dict[str, Any]]:
     path = _registry_path()
     # One-time migration: earlier builds stored the registry under the user home
@@ -477,12 +507,10 @@ async def decide_plan(
     correctly to the user's WS (instead of a background task that has no subscriber),
     and the seeded message persists if the user navigates away and returns later.
     """
-    from ..agents.api_runner import APIRunner
     from ..orchestrator import Orchestrator
 
     store = _load_store(project_id)
-    api_key = get_api_key()  # re-fetch for orchestrator
-    orchestrator = Orchestrator(store=store, runner=APIRunner(api_key=api_key))
+    orchestrator = Orchestrator(store=store, runner=_build_runner(store))
 
     try:
         if body.approved:
@@ -509,11 +537,10 @@ async def decide_plan(
 async def pause_project(
     project_id: str, _api_key: str = Depends(get_api_key)
 ) -> ProjectDetail:
-    from ..agents.api_runner import APIRunner
     from ..orchestrator import Orchestrator
 
     store = _load_store(project_id)
-    orchestrator = Orchestrator(store=store, runner=APIRunner(api_key=get_api_key()))
+    orchestrator = Orchestrator(store=store, runner=_build_runner(store))
     await orchestrator.pause()
     return _to_detail(store)
 
@@ -527,7 +554,6 @@ async def resume_paused_project(
 
     Distinct from resume_execution (which resets blocked tasks). This one is the
     companion to /pause — user clicked pause, now clicks resume."""
-    from ..agents.api_runner import APIRunner
     from ..orchestrator import Orchestrator
     from ..state import ProjectStatus
 
@@ -538,7 +564,7 @@ async def resume_paused_project(
             status_code=409,
             detail=f"Cannot resume: project is {meta.status.value}, not paused.",
         )
-    orchestrator = Orchestrator(store=store, runner=APIRunner(api_key=get_api_key()))
+    orchestrator = Orchestrator(store=store, runner=_build_runner(store))
     await orchestrator.resume(resume_to=ProjectStatus.EXECUTING)
     # Resuming from paused means work should continue — start the background
     # job so the user doesn't have to open the project to trigger it.
@@ -552,11 +578,10 @@ async def retry_dispatcher(
 ) -> ProjectDetail:
     """Retry the Dispatcher after a BLOCKED state. Flips status back to DISPATCHING;
     the frontend's dispatcher WebSocket auto-reopens on status change."""
-    from ..agents.api_runner import APIRunner
     from ..orchestrator import Orchestrator
 
     store = _load_store(project_id)
-    orchestrator = Orchestrator(store=store, runner=APIRunner(api_key=get_api_key()))
+    orchestrator = Orchestrator(store=store, runner=_build_runner(store))
     try:
         await orchestrator.retry_dispatcher()
     except RuntimeError as exc:
@@ -1175,22 +1200,23 @@ async def _ensure_background_execution(project_id: str, store: ProjectStore) -> 
     this is a no-op. The job runs decoupled from any WebSocket, so closing
     the UI doesn't stop execution.
 
-    Requires an API key set in the key store; if missing, logs a warning and
-    skips (the user sees a key-missing error on next WS open anyway).
+    Requires an API key set in the key store when runner=api; in claude_code
+    mode the key is not needed (auth comes from the user's `claude` CLI config).
     """
-    from ..agents.api_runner import APIRunner
     from ..orchestrator import Orchestrator
     from ..orchestrator.job_registry import get_registry
     from .session import _store as _key_store
 
-    api_key = _key_store.get()
-    if api_key is None:
-        logger.warning(
-            "Cannot start background execution for %s: no API key set", project_id
-        )
-        return
+    settings = get_settings()
+    if settings.runner == "api":
+        api_key = _key_store.get()
+        if api_key is None:
+            logger.warning(
+                "Cannot start background execution for %s: no API key set", project_id
+            )
+            return
 
-    orchestrator = Orchestrator(store=store, runner=APIRunner(api_key=api_key))
+    orchestrator = Orchestrator(store=store, runner=_build_runner(store))
     registry = get_registry()
     await registry.ensure_running(
         project_id, lambda: orchestrator.stream_execution_loop()

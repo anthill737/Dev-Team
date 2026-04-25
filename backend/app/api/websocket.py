@@ -22,7 +22,6 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
-from ..agents.api_runner import APIRunner
 from ..orchestrator import Orchestrator
 from ..state import ProjectStatus, ProjectStore
 from .projects import _load_registry
@@ -80,7 +79,11 @@ async def _run_agent_ws(websocket: WebSocket, project_id: str, *, agent: str) ->
         return
 
     store = ProjectStore(root_path)
-    orchestrator = Orchestrator(store=store, runner=APIRunner(api_key=api_key))
+    # Pick runner based on global config — claude_code uses subscription,
+    # api uses the in-memory API key. Avoids having to duplicate selection
+    # logic; matches every other orchestrator instantiation site.
+    from .projects import _build_runner
+    orchestrator = Orchestrator(store=store, runner=_build_runner(store))
 
     await websocket.accept()
     logger.info("WS accepted for project %s (agent=%s)", project_id, agent)

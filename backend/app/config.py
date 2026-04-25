@@ -30,6 +30,21 @@ class Settings(BaseSettings):
     model_coder: str = "claude-sonnet-4-6"
     model_reviewer: str = "claude-opus-4-7"
 
+    # Agent runner selection. Two options:
+    #
+    #   "claude_code" (default): drive agents via the user's Claude Code CLI
+    #     subscription. No per-token billing — usage counts against Pro/Max
+    #     quota (5-hour rolling window). Requires `claude` CLI installed and
+    #     authenticated (`claude setup-token` or interactive `claude` login).
+    #
+    #   "api": drive agents via direct Anthropic API calls using an API key.
+    #     Pay-per-token billing. Set DEVTEAM_API_KEY or per-request header.
+    #
+    # When set to "claude_code", the API-key path is hard-disabled at runtime
+    # to prevent accidental billing — API requests short-circuit with an error
+    # even if DEVTEAM_API_KEY is populated in the environment.
+    runner: str = Field(default="claude_code", pattern="^(claude_code|api)$")
+
     # Default budgets. Overridable per project during setup.
     # Budget defaults. These are the numbers applied when a user creates a
     # project without overriding them. Chosen based on real-world runs:

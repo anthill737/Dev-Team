@@ -23,12 +23,22 @@ def _bootstrap_api_key_from_env() -> None:
     """If ANTHROPIC_API_KEY is set in the environment, pre-load it into the session store
     so the user doesn't have to paste it every time they start the app.
 
+    Skipped entirely when the runner is claude_code — the API key wouldn't be used
+    anyway, and loading it would give a misleading "authenticated" state in the UI.
+
     Validation: we do a cheap sanity check on the prefix. We deliberately don't make a
     live API call here — that would slow startup and fail the whole app on transient
     network issues. If the env var is malformed, the user sees an auth error on their
     first action and the frontend falls back to the key-entry form (they can clear
     and re-enter).
     """
+    if get_settings().runner == "claude_code":
+        if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+            logger.info(
+                "ANTHROPIC_API_KEY is set in env but runner=claude_code — ignoring "
+                "the key. Remove it from .env to silence this note."
+            )
+        return
     env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not env_key:
         return
@@ -46,8 +56,36 @@ def _bootstrap_api_key_from_env() -> None:
     )
 
 
+def _log_runner_banner() -> None:
+    """Print a prominent banner on startup showing which agent runner is active.
+
+    Matters because the two modes have completely different billing characteristics
+    and auth requirements. Sending the user mixed signals here is the fastest way
+    to cause surprise API bills or confusing 'not authenticated' errors.
+    """
+    runner = get_settings().runner
+    bar = "=" * 66
+    if runner == "claude_code":
+        logger.info(bar)
+        logger.info("  Agent runner: CLAUDE CODE (subscription billing)")
+        logger.info("  Each agent invocation spawns a `claude` subprocess and")
+        logger.info("  uses your Pro/Max quota. API key is NOT used in this mode.")
+        logger.info("  Auth source: ~/.claude config (run `claude` once to log in).")
+        logger.info(bar)
+    elif runner == "api":
+        logger.info(bar)
+        logger.info("  Agent runner: ANTHROPIC API (per-token billing)")
+        logger.info("  Each call bills to your API account. Set ANTHROPIC_API_KEY")
+        logger.info("  or paste it in the UI on first run.")
+        logger.info(bar)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # Show the active runner before anything else — surprises here (wrong billing
+    # mode) are expensive, so make it unmissable in the log.
+    _log_runner_banner()
 
     # Load persisted API key BEFORE registering routes so health checks etc work cleanly.
     _bootstrap_api_key_from_env()

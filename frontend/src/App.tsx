@@ -15,7 +15,19 @@ export default function App() {
 
   useEffect(() => {
     sessionStatus()
-      .then((s) => setScreen(s.has_key ? { kind: "projects" } : { kind: "key" }))
+      .then((s) => {
+        // In claude_code mode, the user's auth comes from their `claude` CLI
+        // subscription config — there's no API key to set, and the backend
+        // doesn't read one. Skip KeySetup entirely. If the user's `claude`
+        // CLI isn't authenticated, they'll see a clear error from the agent
+        // runner on first action; we don't preflight that here because it
+        // would slow startup and create a dependency on subprocess spawn.
+        if (s.runner === "claude_code") {
+          setScreen({ kind: "projects" });
+        } else {
+          setScreen(s.has_key ? { kind: "projects" } : { kind: "key" });
+        }
+      })
       .catch(() => setScreen({ kind: "key" }));
   }, []);
 

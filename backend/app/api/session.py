@@ -97,7 +97,18 @@ _store = _KeyStore()
 
 
 def get_api_key() -> str:
-    """Dependency-style accessor for routes that need the API key."""
+    """Dependency-style accessor for routes that need the API key.
+
+    In claude_code mode, returns a placeholder string so routes that declare
+    this dependency (as a form of auth gate) still pass, while the actual
+    runner doesn't use the value. Routes that would bill API calls either
+    branch on `settings.runner` or use `_build_runner(store)` which does the
+    branching internally — so the placeholder is safe.
+    """
+    from ..config import get_settings
+
+    if get_settings().runner == "claude_code":
+        return "claude-code-subscription-no-key-needed"
     key = _store.get()
     if key is None:
         raise HTTPException(
@@ -145,11 +156,32 @@ async def set_key(body: SetKeyRequest) -> SetKeyResponse:
 
 class SessionStatusResponse(BaseModel):
     has_key: bool
+    # Which agent runner the backend is configured for. Frontend uses this to
+    # decide whether to show the API-key setup screen. In claude_code mode,
+    # no key is needed — the user authenticates via the `claude` CLI.
+    runner: str = "api"
+    # Human-readable description of how auth works for this runner. Shown on
+    # the settings/about screen so users know what's backing their usage.
+    runner_description: str = ""
 
 
 @router.get("/status", response_model=SessionStatusResponse)
 async def session_status() -> SessionStatusResponse:
-    return SessionStatusResponse(has_key=_store.has())
+    from ..config import get_settings
+
+    runner = get_settings().runner
+    if runner == "claude_code":
+        desc = (
+            "Subscription billing via Claude Code CLI. "
+            "Usage counts against your Pro/Max plan."
+        )
+    else:
+        desc = "Per-token billing via Anthropic API key."
+    return SessionStatusResponse(
+        has_key=_store.has(),
+        runner=runner,
+        runner_description=desc,
+    )
 
 
 @router.delete("/key", response_model=SetKeyResponse)
