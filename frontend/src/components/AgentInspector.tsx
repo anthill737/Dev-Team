@@ -268,9 +268,21 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
                   : "border-transparent text-gray-400 hover:text-gray-200"
               }`}
             >
-              {isActive && (
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              )}
+              {isActive ? (
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"
+                  title="Active in the last 5 seconds"
+                />
+              ) : eventCount > 0 ? (
+                // Gray dot = this agent has run during the project but is
+                // currently idle. Helps you see at a glance which agents
+                // have any history at all (Reviewer "no dot" tells you it
+                // has never run for this project).
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-gray-600"
+                  title="Has events but currently idle"
+                />
+              ) : null}
               <span>{TAB_LABELS[tab]}</span>
               {eventCount > 0 && (
                 <span className="text-[13px] text-gray-500">
@@ -343,9 +355,237 @@ function TranscriptView({
   events: AgentEvent[];
   showAgentBadge: boolean;
 }) {
-  // Build a render plan. We walk events in order, collapsing consecutive
-  // text_deltas from the same agent into a single text block, and pairing
-  // tool_use_start with the matching tool_result.
+  // ============================================================
+  // STAGE 1: Group events by (task_id, iteration).
+  //
+  // Why: a flat stream of "fs_read fs_read fs_read" cards is unreadable.
+  // The Coder works in iterations on tasks. Grouping events into per-iteration
+  // cards makes the structure of the work visible — you can see "P2-T6
+  // iteration 3 had 12 tool calls and ended with the Reviewer rejecting" as
+  // a visual unit, then collapse it and look at iteration 4.
+  //
+  // Heuristic: the orchestrator emits `task_start` events with task_id +
+  // iteration. Events between two task_starts (or with the same task_id)
+  // belong to one iteration. Events without a task_id (Architect chat,
+  // Dispatcher decomposition, orchestrator status events) go into a special
+  // "ambient" group at the top so they don't get lost.
+  // ============================================================
+  type Group = {
+    key: string; // unique group id for React
+    taskId: string | null; // null = ambient group
+    iteration: number | null;
+    agent: AgentRole | null; // dominant agent for this group
+    events: AgentEvent[];
+  };
+
+  const groups: Group[] = [];
+  let currentGroup: Group | null = null;
+  let ambientGroup: Group | null = null;
+
+  for (const e of events) {
+    // task_start kicks off a new task/iteration group, even if the previous
+    // group had the same task_id (e.g. iteration N+1).
+    if (e.kind === "task_start") {
+      const taskId = String(e.payload.task_id ?? e.task_id ?? "?");
+      const iteration =
+        typeof e.payload.iteration === "number" ? e.payload.iteration : null;
+      currentGroup = {
+        key: `${taskId}-iter${iteration ?? "?"}-seq${e.seq}`,
+        taskId,
+        iteration,
+        agent: null,
+        events: [e],
+      };
+      groups.push(currentGroup);
+      continue;
+    }
+
+    // Events tagged with a task_id continue the current group if it matches,
+    // or start a new task group when the task changes.
+    if (e.task_id) {
+      if (!currentGroup || currentGroup.taskId !== e.task_id) {
+        currentGroup = {
+          key: `${e.task_id}-orphan-seq${e.seq}`,
+          taskId: e.task_id,
+          iteration: null,
+          agent: null,
+          events: [],
+        };
+        groups.push(currentGroup);
+      }
+      currentGroup.events.push(e);
+      // Track the dominant agent — the one that owns the most events in this
+      // group. Used to color the group header.
+      if (e.agent !== "orchestrator") {
+        currentGroup.agent = e.agent;
+      }
+      continue;
+    }
+
+    // No task_id → ambient (Architect interview, Dispatcher decomposition,
+    // orchestrator-level status events). Pin to a single ambient group at
+    // the top of the panel so user can read the conversation flow without
+    // it bleeding into the per-task transcripts.
+    if (!ambientGroup) {
+      ambientGroup = {
+        key: "ambient",
+        taskId: null,
+        iteration: null,
+        agent: null,
+        events: [],
+      };
+      groups.unshift(ambientGroup);
+    }
+    ambientGroup.events.push(e);
+    if (e.agent !== "orchestrator" && !ambientGroup.agent) {
+      ambientGroup.agent = e.agent;
+    }
+  }
+
+  // ============================================================
+  // STAGE 2: Render each group as a collapsible card.
+  //
+  // Most-recent group expanded; everything older collapsed. User can click
+  // headers to toggle. Ambient group always expanded since it's the running
+  // conversation.
+  // ============================================================
+  if (groups.length === 0) {
+    return (
+      <div className="text-[15px] text-gray-500 italic">
+        Nothing yet — agent activity will appear here.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {groups.map((g, idx) => {
+        const isLast = idx === groups.length - 1;
+        const isAmbient = g.taskId === null;
+        return (
+          <GroupCard
+            key={g.key}
+            group={g}
+            showAgentBadge={showAgentBadge}
+            defaultExpanded={isAmbient || isLast}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// Renders one task/iteration group as a collapsible card with a header
+// showing the task, agent, iteration, and event-count summary. Body is
+// the existing flat block list, unchanged.
+function GroupCard({
+  group,
+  showAgentBadge,
+  defaultExpanded,
+}: {
+  group: {
+    taskId: string | null;
+    iteration: number | null;
+    agent: AgentRole | null;
+    events: AgentEvent[];
+  };
+  showAgentBadge: boolean;
+  defaultExpanded: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  // Update expansion when defaultExpanded flips (e.g. a new group becomes the
+  // most-recent one and should auto-expand). Keeps user's manual toggles
+  // intact for older groups.
+  const prevDefaultRef = useRef(defaultExpanded);
+  useEffect(() => {
+    if (defaultExpanded && !prevDefaultRef.current) {
+      setExpanded(true);
+    }
+    prevDefaultRef.current = defaultExpanded;
+  }, [defaultExpanded]);
+
+  // Quick stats for the header — total events, tool calls, whether a
+  // submit_review showed up. Cheap, computed on each render; this list
+  // is bounded by _MAX_EVENTS_PER_AGENT.
+  const stats = useMemo(() => {
+    let toolCalls = 0;
+    let textChunks = 0;
+    let reviewOutcome: "approve" | "request_changes" | null = null;
+    for (const e of group.events) {
+      if (e.kind === "tool_use_start") toolCalls += 1;
+      else if (e.kind === "text_delta") textChunks += 1;
+      // submit_review's outcome lives on the tool input
+      if (e.kind === "tool_use_start" && e.payload.name === "submit_review") {
+        const outcome = (e.payload.input as Record<string, unknown> | undefined)
+          ?.outcome;
+        if (outcome === "approve" || outcome === "request_changes") {
+          reviewOutcome = outcome;
+        }
+      }
+    }
+    return { toolCalls, textChunks, reviewOutcome };
+  }, [group.events]);
+
+  // Header label. Ambient = just an "Activity" header. Task groups show the
+  // task ID, iteration, and agent.
+  const headerLabel =
+    group.taskId === null
+      ? "Conversation"
+      : `${group.taskId}${
+          group.iteration !== null ? ` · iteration ${group.iteration}` : ""
+        }${group.agent ? ` · ${group.agent}` : ""}`;
+
+  return (
+    // Border around each group makes the boundaries visible without being
+    // heavy. Negative space + borders, no full background fills.
+    <div className="border border-line/40 rounded overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-panel/30 text-left bg-panel/20"
+      >
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          <span className="text-gray-500 shrink-0 text-[13px]">
+            {expanded ? "▾" : "▸"}
+          </span>
+          <span className="text-gray-200 font-medium truncate">
+            {headerLabel}
+          </span>
+          {stats.reviewOutcome === "approve" && (
+            <span className="text-[12px] px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300 shrink-0">
+              approved
+            </span>
+          )}
+          {stats.reviewOutcome === "request_changes" && (
+            <span className="text-[12px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 shrink-0">
+              rework
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-[13px] text-gray-500 shrink-0">
+          {stats.textChunks > 0 && <span>{stats.textChunks} chunks</span>}
+          {stats.toolCalls > 0 && <span>{stats.toolCalls} tools</span>}
+        </div>
+      </button>
+      {expanded && (
+        <div className="p-2 space-y-2">
+          <FlatBlocks events={group.events} showAgentBadge={showAgentBadge} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The original flat-block rendering from the old TranscriptView, extracted
+// so GroupCard can reuse it for each group's body.
+function FlatBlocks({
+  events,
+  showAgentBadge,
+}: {
+  events: AgentEvent[];
+  showAgentBadge: boolean;
+}) {
   type Block =
     | { kind: "text"; agent: AgentRole; text: string; firstSeq: number }
     | {
@@ -366,8 +606,6 @@ function TranscriptView({
       };
 
   const blocks: Block[] = [];
-  // Map of tool_use_id → block index, so when a tool_result arrives later we
-  // can find its matching tool_use_start and attach the result.
   const toolBlockByUseId: Record<string, number> = {};
 
   for (const e of events) {
@@ -405,10 +643,7 @@ function TranscriptView({
           content: e.payload.content,
           isError: Boolean(e.payload.is_error),
         };
-      }
-      // If we don't have a matching tool call (lost the start event somehow),
-      // render the result as a status block so it's not silently dropped.
-      else {
+      } else {
         blocks.push({
           kind: "status",
           agent: e.agent,
@@ -417,8 +652,11 @@ function TranscriptView({
           payload: e.payload,
         });
       }
+    } else if (e.kind === "task_start") {
+      // task_start is consumed by the group header; don't render it as a
+      // status row inside the body or it duplicates the header.
+      continue;
     } else {
-      // turn_complete, task_start, usage, error, etc.
       blocks.push({
         kind: "status",
         agent: e.agent,

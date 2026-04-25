@@ -17,6 +17,12 @@ interface Props {
   project: ProjectDetail | null;
   agentStreaming: boolean;
   agentCurrentActivity?: string | null;
+  /** Which agent is actually doing the work right now: 'Architect' | 'Dispatcher'
+   *  | 'Coder' | 'Reviewer' | null. Used to render an accurate single status
+   *  line — without this, the status bar showed "Architect is working" while
+   *  the Coder was the one running, because any open Architect WebSocket made
+   *  `agentStreaming` true. */
+  activeAgent?: string | null;
   /** When project is BLOCKED, the reason string from the latest relevant
    *  decisions.log entry. Surfaced directly so the user doesn't have to dig. */
   blockedReason?: string | null;
@@ -75,6 +81,7 @@ export function StatusBar({
   project,
   agentStreaming,
   agentCurrentActivity,
+  activeAgent,
   blockedReason,
   onRetryDispatcher,
   retryingDispatcher,
@@ -93,7 +100,7 @@ export function StatusBar({
   resumingPhases,
   onOpenIn,
 }: Props) {
-  const s = computeStatus(project, agentStreaming, agentCurrentActivity, blockedReason);
+  const s = computeStatus(project, agentStreaming, agentCurrentActivity, blockedReason, activeAgent);
 
   const colorByMode: Record<StatusMode, string> = {
     active: "bg-amber-900/30 border-amber-700/60 text-amber-200",
@@ -280,6 +287,7 @@ function computeStatus(
   streaming: boolean,
   activity?: string | null,
   blockedReason?: string | null,
+  activeAgent?: string | null,
 ): StatusDisplay {
   if (!project) {
     return {
@@ -289,11 +297,15 @@ function computeStatus(
     };
   }
 
-  // If an agent is actively mid-turn, that trumps the project status
+  // If an agent is actively mid-turn, that trumps the project status.
+  // Use activeAgent (Architect/Dispatcher/Coder/Reviewer) for the label
+  // instead of always saying "Architect is working" — the latter was
+  // misleading when Coder/Reviewer were actually doing the work.
   if (streaming) {
+    const who = activeAgent ?? "Agent";
     return {
       mode: "active",
-      label: "Architect is working",
+      label: `${who} is working`,
       detail: activity || "Composing response, running tools, researching...",
     };
   }
