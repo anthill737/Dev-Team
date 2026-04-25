@@ -21,7 +21,6 @@ import { useExecutionStream } from "../hooks/useExecutionStream";
 import { ArchitectChat } from "./ArchitectChat";
 import { CompletedTasks } from "./CompletedTasks";
 import { DecisionsLog } from "./DecisionsLog";
-import { LiveExecution } from "./LiveExecution";
 import { AgentInspector } from "./AgentInspector";
 import { PlanViewer } from "./PlanViewer";
 import { EditProjectModal } from "./ProjectList";
@@ -196,16 +195,6 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
       setAutoFlippedToCompleted(true);
     }
   }, [doneTaskCount, autoFlippedToCompleted]);
-
-  // LiveExecution panel shows whenever there's meaningful execution state to display —
-  // while executing, during phase review, or if this run produced any completions even
-  // after the socket closed (so the user still sees what just happened).
-  const showLiveExecution =
-    project?.status === "executing" ||
-    project?.status === "phase_review" ||
-    project?.status === "complete" ||
-    execution.completedInRun.length > 0 ||
-    execution.recentActivity.length > 0;
 
   // When a task is awaiting user review, find it so we can show the review panel.
   // There's at most one at a time — the execution loop halts on review.
@@ -439,20 +428,34 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
           dispatcher.status === "running" ||
           execution.status === "running"
         }
+        // The actual agent in motion. Execution-loop activity (Coder/Reviewer)
+        // takes priority over Architect because the loop being live means real
+        // work is happening; Architect streaming during execution is usually
+        // just an idle background socket. Dispatcher in the middle when it's
+        // decomposing. Falls back to "architect" only when nothing else is.
+        activeAgent={
+          execution.status === "running"
+            ? execution.currentTask?.task_id?.toLowerCase().includes("review")
+              ? "Reviewer"
+              : "Coder"
+            : dispatcher.status === "running"
+              ? "Dispatcher"
+              : streaming
+                ? "Architect"
+                : null
+        }
         agentCurrentActivity={
-          streaming && toolActivity.length > 0
-            ? `Using ${toolActivity[toolActivity.length - 1].name}...`
-            : streaming && partialText
-              ? "Drafting response..."
-              : dispatcher.status === "running" && dispatcher.toolActivity.length > 0
-                ? `Dispatcher using ${dispatcher.toolActivity[dispatcher.toolActivity.length - 1].name}...`
-                : execution.status === "running" && execution.currentTask
-                  ? `Coder on ${execution.currentTask.task_id}${
-                      execution.currentActivity ? ` · ${execution.currentActivity}` : ""
-                    }`
-                  : execution.status === "running"
-                    ? "Execution loop running..."
-                    : null
+          execution.status === "running" && execution.currentTask
+            ? `${execution.currentTask.task_id}${
+                execution.currentActivity ? ` · ${execution.currentActivity}` : ""
+              }`
+            : dispatcher.status === "running" && dispatcher.toolActivity.length > 0
+              ? `using ${dispatcher.toolActivity[dispatcher.toolActivity.length - 1].name}`
+              : streaming && toolActivity.length > 0
+                ? `using ${toolActivity[toolActivity.length - 1].name}`
+                : streaming && partialText
+                  ? "drafting response"
+                  : null
         }
         blockedReason={blockedReason}
         onRetryDispatcher={isDispatcherBlock ? handleRetryDispatcher : undefined}
@@ -499,49 +502,25 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         autoSaveId={`workspace:${projectId}`}
         className="flex-1 min-h-0"
       >
-        {/* Left column: Architect chat, with live execution panel below
-            when there's something to show. The inner vertical split is
-            its own PanelGroup so the chat/live-execution heights are
-            independently draggable from the column widths. */}
+        {/* Left column: Architect chat. The Live Execution panel was removed
+            because the Agents column on the right already streams the same
+            tool-call activity per agent — having both was duplicative. The
+            Agents column is now the single source of truth for live agent
+            activity. */}
         <Panel defaultSize={40} minSize={15} className="flex flex-col min-h-0 min-w-0">
-          {showLiveExecution ? (
-            <PanelGroup
-              direction="vertical"
-              autoSaveId={`workspace-left:${projectId}`}
-            >
-              <Panel defaultSize={55} minSize={20} className="min-h-0 min-w-0 overflow-hidden">
-                <ArchitectChat
-                  interview={interview}
-                  streaming={streaming}
-                  partialText={partialText}
-                  toolActivity={toolActivity}
-                  tokensThisTurn={tokensThisTurn}
-                  disabled={!chattable || wsStatus !== "open"}
-                  disabledReason={chatDisabledReason}
-                  onSend={send}
-                  error={error}
-                />
-              </Panel>
-              <PanelResizeHandle className="h-px bg-line hover:h-1 hover:bg-accent transition-all" />
-              <Panel defaultSize={45} minSize={15} className="min-h-0 min-w-0 p-2 overflow-hidden">
-                <LiveExecution stream={execution} />
-              </Panel>
-            </PanelGroup>
-          ) : (
-            <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-              <ArchitectChat
-                interview={interview}
-                streaming={streaming}
-                partialText={partialText}
-                toolActivity={toolActivity}
-                tokensThisTurn={tokensThisTurn}
-                disabled={!chattable || wsStatus !== "open"}
-                disabledReason={chatDisabledReason}
-                onSend={send}
-                error={error}
-              />
-            </div>
-          )}
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+            <ArchitectChat
+              interview={interview}
+              streaming={streaming}
+              partialText={partialText}
+              toolActivity={toolActivity}
+              tokensThisTurn={tokensThisTurn}
+              disabled={!chattable || wsStatus !== "open"}
+              disabledReason={chatDisabledReason}
+              onSend={send}
+              error={error}
+            />
+          </div>
         </Panel>
 
         <PanelResizeHandle className="w-px bg-line hover:w-1 hover:bg-accent transition-all" />
