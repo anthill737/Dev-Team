@@ -57,7 +57,7 @@ export function ArchitectChat({
         )}
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollRef} className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {interview.length === 0 && !streaming && (
           <div className="text-[17px] text-gray-500 italic">
             The Architect will interview you to understand what you want to build. Start by
@@ -129,22 +129,24 @@ const MessageBubble = memo(function MessageBubble({
 }) {
   const isUser = role === "user";
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    // The outer flex container must have min-w-0 so it honors max-width on
+    // the inner bubble. Without it, flex children can grow beyond constraints.
+    <div className={`flex min-w-0 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[85%] rounded-lg px-3 py-2 text-[17px] prose-chat ${
+        className={`max-w-[85%] min-w-0 rounded-lg px-3 py-2 text-[17px] prose-chat overflow-hidden ${
           isUser
             ? "bg-amber-900/30 border border-amber-900/40"
             : "bg-panel border border-line"
         }`}
       >
         {isUser ? (
-          <div className="whitespace-pre-wrap">{content}</div>
+          <div className="whitespace-pre-wrap break-words">{content}</div>
         ) : streaming ? (
           // While streaming, render as plain text — parsing markdown on every
           // text_delta is O(n²) (the whole growing string gets re-parsed) and
           // is the #1 source of jitter. Markdown styling kicks in on turn_complete.
           <>
-            <div className="whitespace-pre-wrap">{content}</div>
+            <div className="whitespace-pre-wrap break-words">{content}</div>
             <span className="inline-block w-1.5 h-4 bg-accent ml-0.5 align-middle animate-pulse" />
           </>
         ) : (

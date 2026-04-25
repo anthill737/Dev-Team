@@ -137,6 +137,52 @@ def test_project_complete_when_all_tasks_done() -> None:
     assert decision.kind == SchedulerDecisionKind.PROJECT_COMPLETE
 
 
+def test_phase_complete_when_only_p1_decomposed_but_plan_has_more_phases() -> None:
+    """Real-world bug: Dispatcher only decomposed P1's tasks. When P1 finishes,
+    tasks.json contains only P1 tasks (all done). Without remaining_phase_ids,
+    scheduler used to incorrectly emit PROJECT_COMPLETE — meaning auto-advance
+    never fired and P2/P3/etc. were silently skipped. With remaining_phase_ids
+    we know the plan has more phases and emit PHASE_COMPLETE so auto-advance
+    can dispatch the next phase."""
+    tasks = [
+        task("P1-T1", status="done"),
+        task("P1-T2", status="done"),
+        # No P2 or P3 tasks yet — Dispatcher hasn't decomposed them.
+    ]
+    decision = choose_next_action(
+        tasks,
+        current_phase="P1",
+        remaining_phase_ids=["P1", "P2", "P3"],
+    )
+    assert decision.kind == SchedulerDecisionKind.PHASE_COMPLETE
+    assert "more phases" in decision.reason.lower()
+
+
+def test_project_complete_when_current_phase_is_last_in_plan() -> None:
+    """Same as the bug fix above, but the current phase IS the last one in
+    plan.md. All tasks done + last phase = genuinely complete."""
+    tasks = [
+        task("P1-T1", status="done"),
+        task("P2-T1", phase="P2", status="done"),
+        task("P3-T1", phase="P3", status="done"),
+    ]
+    decision = choose_next_action(
+        tasks,
+        current_phase="P3",
+        remaining_phase_ids=["P1", "P2", "P3"],
+    )
+    assert decision.kind == SchedulerDecisionKind.PROJECT_COMPLETE
+
+
+def test_remaining_phase_ids_none_falls_back_to_old_behavior() -> None:
+    """Tests that don't pass remaining_phase_ids should still work — backward
+    compat for fixtures and any code path that doesn't have plan.md."""
+    tasks = [task("P1-T1", status="done")]
+    decision = choose_next_action(tasks, current_phase="P1")
+    # Without plan info, we trust tasks.json says everything is done
+    assert decision.kind == SchedulerDecisionKind.PROJECT_COMPLETE
+
+
 def test_deadlock_when_pending_task_has_unreachable_dependency() -> None:
     """Task references a dep id that doesn't exist in the list. No escape route."""
     tasks = [task("P1-T1", deps=["does-not-exist"])]

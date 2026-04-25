@@ -51,6 +51,13 @@ interface Props {
    *  Only shown when project is in INTERVIEW state. */
   onForceSubmitPlan?: () => void;
   forceSubmittingPlan?: boolean;
+  /** Resume execution of phases that were planned but never decomposed (the
+   *  multi-phase auto-advance bug rescue). Visible only on COMPLETE projects
+   *  whose plan.md has unresolved phase IDs — see ProjectDetail.unresolved_phase_ids.
+   *  On click, backend sets current_phase to the next undone phase and flips
+   *  status to DISPATCHING. The existing pipeline takes over from there. */
+  onResumePhases?: () => void;
+  resumingPhases?: boolean;
   /** Open the project root in Explorer / VS Code / Terminal. Always shown
    *  when callback provided — quick launchers users will want frequently. */
   onOpenIn?: (target: "explorer" | "vscode" | "terminal") => void;
@@ -82,6 +89,8 @@ export function StatusBar({
   onOpenSettings,
   onForceSubmitPlan,
   forceSubmittingPlan,
+  onResumePhases,
+  resumingPhases,
   onOpenIn,
 }: Props) {
   const s = computeStatus(project, agentStreaming, agentCurrentActivity, blockedReason);
@@ -172,6 +181,33 @@ export function StatusBar({
           {forceSubmittingPlan ? "Submitting..." : "Force submit plan"}
         </button>
       )}
+      {project?.status === "complete" &&
+        (project.unresolved_phase_ids?.length ?? 0) > 0 &&
+        onResumePhases && (
+          // Visible only on COMPLETE projects whose plan.md has phases
+          // that never ran (the multi-phase auto-advance bug). Lists the
+          // first few unresolved phase IDs in the label so the user knows
+          // what's about to happen.
+          <button
+            type="button"
+            onClick={onResumePhases}
+            disabled={resumingPhases}
+            className="shrink-0 px-3 py-1 text-[15px] font-medium bg-emerald-800 hover:bg-emerald-700 disabled:opacity-50 text-white rounded"
+            title={
+              `Resume work on phases that didn't run: ${
+                project.unresolved_phase_ids.join(", ")
+              }. The Dispatcher will decompose the next undone phase and execution will continue from there. Refuses if the project is currently running or if tasks already exist for the phase to resume.`
+            }
+          >
+            {resumingPhases
+              ? "Resuming..."
+              // Show the full list of unresolved phase IDs, not a truncated
+              // "P2, P3…" — the user needs to know what's about to start.
+              // For projects with many leftover phases this can get long;
+              // the parent flex container already wraps so it's fine.
+              : `Resume phases (${project.unresolved_phase_ids.join(", ")})`}
+          </button>
+        )}
       {onOpenIn && (
         <>
           {/* Quick launchers — always visible in the workspace so the user can

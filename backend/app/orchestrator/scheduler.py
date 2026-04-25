@@ -44,6 +44,7 @@ def choose_next_action(
     current_phase: str | None,
     *,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    remaining_phase_ids: list[str] | None = None,
 ) -> SchedulerDecision:
     """Given the task list and the current phase, return the next action.
 
@@ -52,9 +53,22 @@ def choose_next_action(
       1. If any task has exceeded its iteration budget → ESCALATE_TASK.
       2. If any task is currently in_progress or review → WAITING (coder/reviewer owns it).
       3. If there's a pending task in the current phase whose deps are done → RUN_TASK.
-      4. If every task in every phase is done → PROJECT_COMPLETE.
-      5. If every task in current phase is done (but others remain) → PHASE_COMPLETE.
+      4. If every task in every phase is done AND no phases remain in the plan → PROJECT_COMPLETE.
+      5. If every task in current phase is done (but others remain, OR more phases
+         exist in plan.md that haven't been decomposed yet) → PHASE_COMPLETE.
       6. Otherwise, pending tasks exist but none are reachable → DEADLOCK.
+
+    `remaining_phase_ids` should be the list of phase IDs from plan.md (e.g.
+    ["P1", "P2", "P3"]). The Dispatcher decomposes one phase at a time, so when
+    P1's tasks all finish, `tasks` only contains P1 tasks and the naive "all
+    done" check would incorrectly return PROJECT_COMPLETE. By passing the full
+    plan-phase list we can detect "the current phase is done but plan.md has
+    more phases" and emit PHASE_COMPLETE so auto-advance can fire and the
+    Dispatcher gets invoked for the next phase.
+
+    If `remaining_phase_ids` is None, the scheduler falls back to the old
+    behavior (assume the task list is complete). This preserves test fixtures
+    that don't pass it.
     """
     if not tasks:
         # No tasks at all — the dispatcher hasn't run yet. This is a misuse of the scheduler;
@@ -99,12 +113,39 @@ def choose_next_action(
         )
 
     # 4. Whole project complete? Check this BEFORE phase_complete so that when
-    # everything is done we return PROJECT_COMPLETE, not PHASE_COMPLETE (which would
-    # leave the orchestrator thinking there's another phase to advance to).
+    # everything is done we return PROJECT_COMPLETE, not PHASE_COMPLETE.
+    #
+    # CRITICAL nuance: "all tasks in tasks.json are done" is NOT the same as
+    # "the project is complete". The Dispatcher decomposes one phase at a
+    # time, so if we're partway through a multi-phase plan, tasks.json only
+    # contains the current (and previously completed) phases. We need to
+    # check plan.md's phase list — if there are phases beyond what we've
+    # decomposed, the project isn't done; we just finished a phase.
+    #
+    # `remaining_phase_ids` tells us what plan.md says exist. If we know what
+    # phases exist and the current phase is the last one, all-tasks-done
+    # really does mean PROJECT_COMPLETE. Otherwise treat as PHASE_COMPLETE
+    # so the auto-advance + Dispatcher can pick up the next phase.
     if all(t.get("status") == "done" for t in tasks):
+        is_last_phase = (
+            remaining_phase_ids is None
+            or current_phase is None
+            or current_phase == remaining_phase_ids[-1]
+        )
+        if is_last_phase:
+            return SchedulerDecision(
+                kind=SchedulerDecisionKind.PROJECT_COMPLETE,
+                reason="All tasks done; current phase is the last in plan.md",
+            )
+        # More phases exist in plan.md beyond this one — emit PHASE_COMPLETE
+        # so the orchestrator's auto-advance fires and the Dispatcher gets
+        # called for the next phase.
         return SchedulerDecision(
-            kind=SchedulerDecisionKind.PROJECT_COMPLETE,
-            reason="All tasks across all phases are done",
+            kind=SchedulerDecisionKind.PHASE_COMPLETE,
+            reason=(
+                f"All tasks in {current_phase} are done; plan.md has more phases "
+                f"to decompose"
+            ),
         )
 
     # 5. Current phase complete but other phases remain?

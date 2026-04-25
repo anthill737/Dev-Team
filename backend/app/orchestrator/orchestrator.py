@@ -51,6 +51,26 @@ class Orchestrator:
         self.runner = runner
         self.settings = get_settings()
 
+    def _model_for(self, role: str) -> str:
+        """Resolve the model string for a given agent role.
+
+        Order of precedence:
+          1. Per-project override in meta.json (meta.model_<role>)
+          2. Global default from config.Settings (settings.model_<role>)
+
+        Validation happens at the API layer when the override is written —
+        by the time we read meta here, the value is guaranteed to be a known
+        model string or None. So we can fall through to the default without
+        a fallback-on-bad-string branch.
+        """
+        meta = self.store.read_meta()
+        # The meta field name matches: model_architect, model_coder, etc.
+        attr = f"model_{role}"
+        override = getattr(meta, attr, None)
+        if override:
+            return override
+        return getattr(self.settings, attr)
+
     def _record_event(
         self, agent: str, event: StreamEvent, task_id: str | None = None
     ) -> None:
@@ -147,8 +167,15 @@ class Orchestrator:
 
         async for event in self.runner.stream(
             role="architect",
-            model=self.settings.model_architect,
-            system_prompt=architect_prompt(incremental=incremental),
+            model=self._model_for("architect"),
+            system_prompt=architect_prompt(
+                incremental=incremental,
+                # Pass the project's platform so the Architect knows which
+                # shell syntax to require for the RUN.md acceptance criterion
+                # in the final phase. Read meta lazily here — already cached
+                # in this method's caller most of the time.
+                user_platform=self.store.read_meta().user_platform,
+            ),
             messages=messages,
             tools=tools,
             # 32k gives plenty of room for the biggest response the Architect emits
@@ -177,7 +204,7 @@ class Orchestrator:
         # Update meta with token usage
         if final_result is not None:
             self.store.add_token_usage(
-                model=self.settings.model_architect,
+                model=self._model_for("architect"),
                 tokens_input=final_result.tokens_input,
                 tokens_output=final_result.tokens_output,
                 cache_read=final_result.cache_read_tokens,
@@ -258,7 +285,7 @@ class Orchestrator:
         final_result = None
         async for event in self.runner.stream(
             role="dispatcher",
-            model=self.settings.model_dispatcher,
+            model=self._model_for("dispatcher"),
             system_prompt=dispatcher_prompt(),
             messages=[kickoff_message],
             tools=tools,
@@ -284,7 +311,7 @@ class Orchestrator:
 
         if final_result is not None:
             self.store.add_token_usage(
-                model=self.settings.model_dispatcher,
+                model=self._model_for("dispatcher"),
                 tokens_input=final_result.tokens_input,
                 tokens_output=final_result.tokens_output,
                 cache_read=final_result.cache_read_tokens,
@@ -390,21 +417,21 @@ class Orchestrator:
             )
             return
 
-        coder = Coder(runner=self.runner, model=self.settings.model_coder)
+        coder = Coder(runner=self.runner, model=self._model_for("coder"))
         # Reviewer is always constructed; ExecutionLoop only invokes it for tasks
         # the Dispatcher flagged with requires_review=True. For tasks without the
         # flag, the Reviewer is never called, so there's no cost penalty to having
         # it instantiated.
         from ..agents.reviewer import Reviewer
 
-        reviewer = Reviewer(runner=self.runner, model=self.settings.model_reviewer)
+        reviewer = Reviewer(runner=self.runner, model=self._model_for("reviewer"))
         loop = ExecutionLoop(
             store=self.store,
             sandbox=sandbox,
             runner=coder,
-            coder_model=self.settings.model_coder,
+            coder_model=self._model_for("coder"),
             reviewer=reviewer,
-            reviewer_model=self.settings.model_reviewer,
+            reviewer_model=self._model_for("reviewer"),
         )
 
         # Multi-phase auto-advance. Normally this loop runs once: Dispatcher (if

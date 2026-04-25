@@ -94,6 +94,21 @@ class ProjectMeta:
     # detected platform at creation time.
     user_platform: str = "linux"
 
+    # Per-agent model overrides. None means "use the global default from
+    # config.Settings"; a string here overrides for this project only.
+    #
+    # The orchestrator reads these via _model_for_role(meta, role) before
+    # invoking each agent. Old projects without these fields fall through
+    # to None → global default, no migration needed.
+    #
+    # Validated against MODEL_CHOICES at API write time, so by the time
+    # the orchestrator reads them they're guaranteed to be a known string
+    # or None.
+    model_architect: str | None = None
+    model_dispatcher: str | None = None
+    model_coder: str | None = None
+    model_reviewer: str | None = None
+
 
 @dataclass
 class InboxMessage:

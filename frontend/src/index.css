@@ -36,6 +36,19 @@ body {
 }
 
 /* Markdown content styling inside panels */
+.prose-chat {
+  /* Force long unbreakable tokens (URLs, file paths, snake_case identifiers,
+     command lines) to wrap at any character if necessary. Without this they
+     push the parent bubble wider than its max-width, and panels everywhere
+     downstream get squashed by the runaway content. word-break: break-word is
+     the standard tool; overflow-wrap: anywhere is the more aggressive
+     fallback that handles edge cases (unbreakable strings inside flex). */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  /* Belt and suspenders: a hard ceiling so even if a child element somehow
+     escaped the wrap rules, it can't push the prose container itself wider. */
+  max-width: 100%;
+}
 .prose-chat h1,
 .prose-chat h2,
 .prose-chat h3 {
@@ -69,16 +82,28 @@ body {
   padding: 0.1rem 0.3rem;
   border-radius: 3px;
   font-size: 0.88em;
+  /* Inline code can be long (model strings, file paths). Allow it to wrap
+     instead of forcing the bubble wider. */
+  word-break: break-all;
 }
 .prose-chat pre {
   background: #0f1115;
   border: 1px solid #1d2025;
   padding: 0.6rem;
   border-radius: 6px;
+  /* Code blocks scroll horizontally when their content is too wide rather
+     than wrapping (preserves indent / line meaning). The wrap rules above
+     don't apply because <pre> overrides word-break by default — explicitly
+     normal here so the overflow:auto handles the overflow instead. */
+  word-break: normal;
+  overflow-wrap: normal;
   overflow-x: auto;
   margin: 0.5rem 0;
 }
 .prose-chat pre code {
   background: transparent;
   padding: 0;
+  /* Inside a <pre>, suppress the break-all rule from the inline code style
+     so multi-line code blocks display naturally. */
+  word-break: normal;
 }

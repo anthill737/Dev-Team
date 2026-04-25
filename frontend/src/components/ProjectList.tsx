@@ -359,6 +359,19 @@ export function EditProjectModal({
   const [wallClockMode, setWallClockMode] = useState<"unlimited" | "hours">("unlimited");
   const [hours, setHours] = useState<string>("1");
   const [userPlatform, setUserPlatform] = useState<"windows" | "macos" | "linux">("linux");
+  // Per-agent model choice. The string is either a real model id (override)
+  // or the sentinel "default" to clear the override and use global default.
+  // Loaded from detail on mount; user changes via the dropdowns.
+  const [modelArchitect, setModelArchitect] = useState<string>("default");
+  const [modelDispatcher, setModelDispatcher] = useState<string>("default");
+  const [modelCoder, setModelCoder] = useState<string>("default");
+  const [modelReviewer, setModelReviewer] = useState<string>("default");
+  // Catalog loaded from backend so dropdowns show valid options + global
+  // default labels. Null until first fetch resolves.
+  const [catalog, setCatalog] = useState<{
+    choices: { string: string; label: string; cost_hint: string }[];
+    defaults: { architect: string; dispatcher: string; coder: string; reviewer: string };
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -370,10 +383,15 @@ export function EditProjectModal({
     let cancelled = false;
     (async () => {
       try {
-        // Using the fetch directly because the api module's getProject returns
-        // ProjectDetail and we need the full shape here.
+        // Fetch detail + catalog in parallel — both are cheap reads.
+        // The api module's getProject returns ProjectDetail which carries the
+        // override_model_* fields we use to distinguish "explicit override"
+        // from "no override; happens to match default."
         const mod = await import("../lib/api");
-        const detail = await mod.getProject(project.id);
+        const [detail, cat] = await Promise.all([
+          mod.getProject(project.id),
+          mod.getModelCatalog(),
+        ]);
         if (cancelled) return;
         setProjectBudget(String(detail.project_token_budget));
         setTaskBudget(String(detail.default_task_token_budget));
@@ -386,6 +404,14 @@ export function EditProjectModal({
           setWallClockMode("unlimited");
         }
         if (detail.user_platform) setUserPlatform(detail.user_platform);
+        // Seed model dropdowns: null override → "default" sentinel; else
+        // the actual model string. ?? handles both null and undefined for
+        // older projects that predate these fields.
+        setCatalog(cat);
+        setModelArchitect(detail.override_model_architect ?? "default");
+        setModelDispatcher(detail.override_model_dispatcher ?? "default");
+        setModelCoder(detail.override_model_coder ?? "default");
+        setModelReviewer(detail.override_model_reviewer ?? "default");
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       } finally {
@@ -425,6 +451,15 @@ export function EditProjectModal({
       // Always send the platform selection; cheap to patch and the user
       // probably expects changes to apply even if they didn't "touch" anything.
       args.user_platform = userPlatform;
+
+      // Send model selections. The dropdown value is either "default" (clear
+      // override) or a real model id. Backend handles both. We send all four
+      // every time — cheap and keeps the on-disk state in sync with what the
+      // user sees in the modal.
+      args.model_architect = modelArchitect;
+      args.model_dispatcher = modelDispatcher;
+      args.model_coder = modelCoder;
+      args.model_reviewer = modelReviewer;
 
       await updateProject(project.id, args);
 
@@ -580,6 +615,20 @@ export function EditProjectModal({
               when you created the project — only change it if you moved the project
               to a different OS.
             </p>
+
+            {catalog && (
+              <ModelAssignmentsSection
+                catalog={catalog}
+                architect={modelArchitect}
+                dispatcher={modelDispatcher}
+                coder={modelCoder}
+                reviewer={modelReviewer}
+                onArchitect={setModelArchitect}
+                onDispatcher={setModelDispatcher}
+                onCoder={setModelCoder}
+                onReviewer={setModelReviewer}
+              />
+            )}
           </>
         )}
 
@@ -629,8 +678,37 @@ function CreateProjectModal({
   const [maxIterations, setMaxIterations] = useState<string>("8");
   const [wallClockMode, setWallClockMode] = useState<"unlimited" | "hours">("unlimited");
   const [hours, setHours] = useState<string>("1");
+  // Per-agent model picks. New projects start with "default" for everything;
+  // user can override via the dropdowns before clicking Create.
+  const [modelArchitect, setModelArchitect] = useState<string>("default");
+  const [modelDispatcher, setModelDispatcher] = useState<string>("default");
+  const [modelCoder, setModelCoder] = useState<string>("default");
+  const [modelReviewer, setModelReviewer] = useState<string>("default");
+  const [catalog, setCatalog] = useState<{
+    choices: { string: string; label: string; cost_hint: string }[];
+    defaults: { architect: string; dispatcher: string; coder: string; reviewer: string };
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load the model catalog once. Cheap; no auth dependency beyond the api key
+  // we always have at this point.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mod = await import("../lib/api");
+        const cat = await mod.getModelCatalog();
+        if (!cancelled) setCatalog(cat);
+      } catch {
+        // Silent — without catalog, the model section just doesn't render and
+        // create still works using defaults. Not blocking.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const canSubmit = name.trim() && path.trim() && !submitting;
 
@@ -656,6 +734,13 @@ function CreateProjectModal({
           wallClockMode === "hours" && Number.isFinite(h) && h > 0
             ? Math.round(h * 3600)
             : null,
+        // Per-agent model picks. Skip "default" — it means "no override",
+        // and omitting the field has the same effect on the backend (cleaner
+        // request body too). Only send actual model strings.
+        ...(modelArchitect !== "default" ? { model_architect: modelArchitect } : {}),
+        ...(modelDispatcher !== "default" ? { model_dispatcher: modelDispatcher } : {}),
+        ...(modelCoder !== "default" ? { model_coder: modelCoder } : {}),
+        ...(modelReviewer !== "default" ? { model_reviewer: modelReviewer } : {}),
       });
       onCreated(project.id);
     } catch (e) {
@@ -761,6 +846,20 @@ function CreateProjectModal({
           />
         )}
 
+        {catalog && (
+          <ModelAssignmentsSection
+            catalog={catalog}
+            architect={modelArchitect}
+            dispatcher={modelDispatcher}
+            coder={modelCoder}
+            reviewer={modelReviewer}
+            onArchitect={setModelArchitect}
+            onDispatcher={setModelDispatcher}
+            onCoder={setModelCoder}
+            onReviewer={setModelReviewer}
+          />
+        )}
+
         {error && (
           <div className="mb-4 text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
             {error}
@@ -785,6 +884,128 @@ function CreateProjectModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Reusable section: four dropdowns for per-agent model assignment. Used by
+// both EditProjectModal and CreateProjectModal so the UI stays in sync.
+//
+// Each dropdown shows:
+//   - "(default: <Label>)" as the first option, mapping to the sentinel
+//     "default" string. Picking this clears any per-project override.
+//   - One <option> per model in the catalog, value=model string, label=
+//     friendly name. Tooltip on the option shows the cost hint.
+//
+// The handlers receive the chosen string. "default" or a model id — caller
+// passes that straight through to the API.
+function ModelAssignmentsSection({
+  catalog,
+  architect,
+  dispatcher,
+  coder,
+  reviewer,
+  onArchitect,
+  onDispatcher,
+  onCoder,
+  onReviewer,
+}: {
+  catalog: {
+    choices: { string: string; label: string; cost_hint: string }[];
+    defaults: { architect: string; dispatcher: string; coder: string; reviewer: string };
+  };
+  architect: string;
+  dispatcher: string;
+  coder: string;
+  reviewer: string;
+  onArchitect: (v: string) => void;
+  onDispatcher: (v: string) => void;
+  onCoder: (v: string) => void;
+  onReviewer: (v: string) => void;
+}) {
+  // Helper: find the friendly label for a given default model string.
+  // Falls back to the raw string if a default in config doesn't appear in
+  // the catalog (shouldn't happen, but defensive).
+  const labelOf = (str: string) =>
+    catalog.choices.find((c) => c.string === str)?.label ?? str;
+
+  return (
+    <div className="mb-4">
+      <label className="block text-[17px] font-medium mb-1">Model assignments</label>
+      <p className="text-[15px] text-gray-500 mb-3">
+        Pick a model per agent. (default) uses the global default for that role.
+        Architect and Reviewer benefit most from Opus; Coder/Dispatcher are
+        usually fine on Sonnet. Haiku is cheapest but risks plan/code quality.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <ModelDropdown
+          label="Architect"
+          hint="Plans and interviews. Opus recommended."
+          value={architect}
+          onChange={onArchitect}
+          defaultLabel={labelOf(catalog.defaults.architect)}
+          choices={catalog.choices}
+        />
+        <ModelDropdown
+          label="Dispatcher"
+          hint="Decomposes phases into tasks."
+          value={dispatcher}
+          onChange={onDispatcher}
+          defaultLabel={labelOf(catalog.defaults.dispatcher)}
+          choices={catalog.choices}
+        />
+        <ModelDropdown
+          label="Coder"
+          hint="Writes the code. Bulk of the workload."
+          value={coder}
+          onChange={onCoder}
+          defaultLabel={labelOf(catalog.defaults.coder)}
+          choices={catalog.choices}
+        />
+        <ModelDropdown
+          label="Reviewer"
+          hint="Verifies the Coder's work. Opus recommended."
+          value={reviewer}
+          onChange={onReviewer}
+          defaultLabel={labelOf(catalog.defaults.reviewer)}
+          choices={catalog.choices}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ModelDropdown({
+  label,
+  hint,
+  value,
+  onChange,
+  defaultLabel,
+  choices,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (v: string) => void;
+  defaultLabel: string;
+  choices: { string: string; label: string; cost_hint: string }[];
+}) {
+  return (
+    <div>
+      <label className="block text-[15px] font-medium mb-1">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-ink border border-line rounded px-2 py-1.5 text-[15px]"
+        title={hint}
+      >
+        <option value="default">(default: {defaultLabel})</option>
+        {choices.map((c) => (
+          <option key={c.string} value={c.string} title={c.cost_hint}>
+            {c.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

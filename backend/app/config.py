@@ -24,8 +24,20 @@ class Settings(BaseSettings):
         Path(__file__).resolve().parent.parent.parent / ".devteam-run" / "projects.json"
     )
 
-    # Default model assignments per role. Overridable per project.
-    model_architect: str = "claude-sonnet-4-6"
+    # Default model assignments per role. Overridable per project via the
+    # project's settings UI; persisted in the project's meta.json.
+    #
+    # Architect/Reviewer default to Opus 4.7 — both roles benefit most from
+    # the highest-capability model. The Architect's plan shapes everything
+    # downstream; subtle errors during the interview translate to weeks of
+    # wrong work. The Reviewer is the safety net for the Coder; downgrading
+    # it loses the catch rate that makes mandatory review valuable.
+    #
+    # Dispatcher/Coder default to Sonnet 4.6 — heavy enough on tool use and
+    # decomposition that Haiku is risky, but where Opus's marginal capability
+    # over Sonnet doesn't justify the quota burn. Per-task code-writing rounds
+    # are the bulk of the workload, so this is where Sonnet pays off most.
+    model_architect: str = "claude-opus-4-7"
     model_dispatcher: str = "claude-sonnet-4-6"
     model_coder: str = "claude-sonnet-4-6"
     model_reviewer: str = "claude-opus-4-7"
@@ -96,3 +108,45 @@ def detect_host_platform() -> str:
     if sys.platform == "darwin":
         return "macos"
     return "linux"
+
+
+# ---------------------------------------------------------------------------
+# Model catalog — the single source of truth for valid model strings the
+# project-settings UI can offer per agent.
+#
+# Adding a new model: append the string here. Removing one: take it out of
+# this list AND make sure no project's meta.json references it (the validator
+# will refuse the update if it's not in this list).
+#
+# The "label" is what the UI shows users. The "string" is what the runner
+# passes to Claude Code via ClaudeAgentOptions.model.
+#
+# Cost notes are heuristic and meant to inform users; actual quota burn
+# depends on prompt length, tool calls, etc.
+MODEL_CHOICES: list[dict[str, str]] = [
+    {
+        "string": "claude-opus-4-7",
+        "label": "Opus 4.7",
+        "cost_hint": "highest quality, most quota usage",
+    },
+    {
+        "string": "claude-sonnet-4-6",
+        "label": "Sonnet 4.6",
+        "cost_hint": "balanced — good default for most roles",
+    },
+    {
+        "string": "claude-haiku-4-5-20251001",
+        "label": "Haiku 4.5",
+        "cost_hint": "cheapest, fastest, weakest — risky for Architect/Reviewer",
+    },
+]
+
+
+# Roles that can have model overrides. Used by the project-settings validator
+# to reject unknown role keys, and by the UI to render one dropdown per role.
+AGENT_ROLES: tuple[str, ...] = ("architect", "dispatcher", "coder", "reviewer")
+
+
+def valid_model_strings() -> set[str]:
+    """Set of valid model strings, for quick membership checks in validators."""
+    return {m["string"] for m in MODEL_CHOICES}

@@ -64,6 +64,26 @@ export interface ProjectDetail extends ProjectSummary {
   // Estimated USD cost based on Anthropic public pricing. Backend-computed so the
   // pricing constants live in one place.
   cost_usd_estimate?: number;
+  // Resolved per-agent model assignments — backend returns the override OR
+  // the global default, never null. UI uses these to populate the settings
+  // dropdowns. Strings match what's in the model catalog.
+  model_architect: string;
+  model_dispatcher: string;
+  model_coder: string;
+  model_reviewer: string;
+  // Raw overrides — null when no per-project override is set. Frontend uses
+  // these to distinguish "user explicitly picked Sonnet" from "no override
+  // set; happens to match global default of Sonnet". When null, show
+  // "(default)" in the dropdown; when set, show the specific model.
+  override_model_architect: string | null;
+  override_model_dispatcher: string | null;
+  override_model_coder: string | null;
+  override_model_reviewer: string | null;
+  // Phase IDs from plan.md not yet marked done in meta.phases. Empty list
+  // means the project is fully executed (or no plan yet). UI uses this to
+  // conditionally show "Resume phases" — visible only when there are
+  // unfinished plan phases.
+  unresolved_phase_ids: string[];
 }
 
 export interface Task {
