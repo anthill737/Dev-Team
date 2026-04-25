@@ -223,8 +223,11 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
 
   return (
     <div className="border border-line rounded-lg bg-panel/30 overflow-hidden flex flex-col h-full">
-      {/* Tab strip */}
-      <div className="flex items-center border-b border-line bg-panel/50">
+      {/* Tab strip — flex-wrap so the 5 agent tabs reflow into 2 rows when
+          the column is narrow (which is the default in the right slot of
+          the workspace grid). overflow-x-auto is a fallback for unusual
+          widths where wrapping doesn't trigger. */}
+      <div className="flex flex-wrap items-center border-b border-line bg-panel/50 overflow-x-auto">
         {TAB_AGENTS.map((tab) => {
           const isSelected = selected === tab;
           // For "all" tab we don't have a single summary; sum across agents.

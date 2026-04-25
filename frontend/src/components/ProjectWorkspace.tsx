@@ -484,9 +484,29 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         }}
       />
 
-      <div className="flex-1 grid grid-cols-[2fr_2fr_1fr] min-h-0 divide-x divide-line">
+      {/* Three-column workspace. Tracks are locked with minmax(0, ...) so
+          content inside a column can NEVER expand it — long URLs, JSON tool
+          inputs, big code blocks all stay inside their column and overflow
+          there (scroll or wrap), instead of pushing the column wider and
+          squashing siblings.
+
+          Why this matters: the previous `grid-cols-[2fr_2fr_1fr]` (without
+          minmax) lets CSS grid use intrinsic content size as the minimum
+          per track. A wide tool-call card in the Agents column would push
+          its column wider, eating into the "fr" share of the others. Result:
+          column widths visibly shifted between modes.
+
+          Each column also has min-w-0 so flex/grid children inside honor
+          the track width — a redundant safety since minmax handles it,
+          but cheap and explicit. */}
+      <div
+        className="flex-1 grid min-h-0 divide-x divide-line"
+        style={{
+          gridTemplateColumns: "minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr)",
+        }}
+      >
         {/* Left column: chat on top, live execution below when relevant */}
-        <div className="flex flex-col min-h-0">
+        <div className="flex flex-col min-h-0 min-w-0">
           <div className="flex-1 min-h-0 overflow-hidden">
             <ArchitectChat
               interview={interview}
@@ -507,13 +527,13 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
           )}
         </div>
 
-        <div className="flex flex-col min-h-0">
+        <div className="flex flex-col min-h-0 min-w-0">
           <CenterTabs
             activeTab={activeTab}
             onSelect={setCenterTab}
             taskCount={tasks.length}
           />
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 min-w-0">
             {activeTab === "plan" ? (
               <PlanViewer
                 plan={plan}
@@ -534,14 +554,14 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
           </div>
         </div>
 
-        <div className="flex flex-col min-h-0">
+        <div className="flex flex-col min-h-0 min-w-0">
           <RightTabs
             activeTab={rightTab}
             onSelect={setRightTab}
             doneCount={doneTaskCount}
             decisionCount={decisions.length}
           />
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 min-w-0">
             {rightTab === "decisions" ? (
               <DecisionsLog decisions={decisions} />
             ) : rightTab === "completed" ? (
@@ -592,7 +612,7 @@ function CenterTabs({
         : "border-transparent text-gray-500 hover:text-gray-300"
     }`;
   return (
-    <div className="flex border-b border-line bg-panel/30">
+    <div className="flex flex-wrap border-b border-line bg-panel/30 overflow-x-auto">
       <button
         type="button"
         onClick={() => onSelect("plan")}
@@ -629,7 +649,7 @@ function RightTabs({
         : "border-transparent text-gray-500 hover:text-gray-300"
     }`;
   return (
-    <div className="flex border-b border-line bg-panel/30">
+    <div className="flex flex-wrap border-b border-line bg-panel/30 overflow-x-auto">
       <button
         type="button"
         onClick={() => onSelect("agents")}

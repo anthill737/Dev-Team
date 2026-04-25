@@ -158,3 +158,149 @@ def test_latest_seq_reflects_record_count() -> None:
     buf.record("p1", "architect", "text_delta", {"text": "x"})
     buf.record("p1", "architect", "text_delta", {"text": "y"})
     assert buf.latest_seq("p1") == 2
+
+
+# --- Persistence tests ----------------------------------------------------------
+
+import tempfile
+import json
+from pathlib import Path
+
+
+def test_persistence_round_trip_via_resolver() -> None:
+    """Events recorded with a resolver configured should land on disk and
+    survive a fresh AgentEventBuffer instance."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        # Manual resolver — returns our temp dir for any project_id
+        resolver = lambda pid: project_root  # noqa: E731
+
+        buf1 = AgentEventBuffer(project_root_resolver=resolver)
+        buf1.record("p1", "architect", "text_delta", {"text": "hello"})
+        buf1.record("p1", "architect", "text_delta", {"text": " world"})
+        buf1.record("p1", "coder", "tool_use_start", {"name": "bash"})
+
+        # On disk?
+        events_dir = project_root / ".devteam" / "agent_events"
+        assert events_dir.exists()
+        arch_file = events_dir / "architect.jsonl"
+        coder_file = events_dir / "coder.jsonl"
+        assert arch_file.exists()
+        assert coder_file.exists()
+        # Two architect events, one coder event
+        assert len(arch_file.read_text().strip().split("\n")) == 2
+        assert len(coder_file.read_text().strip().split("\n")) == 1
+
+        # Fresh buffer with same resolver → events come back via hydration
+        buf2 = AgentEventBuffer(project_root_resolver=resolver)
+        events = buf2.fetch("p1", agent="architect")
+        assert len(events) == 2
+        assert events[0]["payload"]["text"] == "hello"
+        # seq counter restored from max seq across files
+        assert buf2.latest_seq("p1") == 3
+
+
+def test_persistence_no_resolver_is_memory_only() -> None:
+    """Constructing with no resolver works but doesn't write to disk."""
+    buf = AgentEventBuffer(project_root_resolver=None)
+    buf.record("p1", "architect", "text_delta", {"text": "x"})
+    assert len(buf.fetch("p1")) == 1
+    # Nothing on disk because we have nowhere to write
+    # (verified implicitly — there's no path to check)
+
+
+def test_persistence_resolver_returns_none_is_memory_only() -> None:
+    """Resolver returning None for a given project_id should fall back to
+    memory-only mode for that project. No disk I/O, no errors."""
+    buf = AgentEventBuffer(project_root_resolver=lambda pid: None)
+    buf.record("missing_proj", "architect", "text_delta", {"text": "x"})
+    assert len(buf.fetch("missing_proj")) == 1
+
+
+def test_persistence_tolerates_malformed_trailing_line() -> None:
+    """A partial trailing line (from a process killed mid-write) should be
+    skipped on hydration. Leading and middle valid events should still load."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        events_dir = project_root / ".devteam" / "agent_events"
+        events_dir.mkdir(parents=True)
+        arch_file = events_dir / "architect.jsonl"
+        # Two valid events + one malformed trailing line
+        valid_events = [
+            {"agent": "architect", "kind": "text_delta", "payload": {"text": "a"},
+             "timestamp": 1.0, "seq": 1, "task_id": None},
+            {"agent": "architect", "kind": "text_delta", "payload": {"text": "b"},
+             "timestamp": 2.0, "seq": 2, "task_id": None},
+        ]
+        arch_file.write_text(
+            "\n".join(json.dumps(e) for e in valid_events) + "\n{partial: malformed"
+        )
+
+        resolver = lambda pid: project_root  # noqa: E731
+        buf = AgentEventBuffer(project_root_resolver=resolver)
+        events = buf.fetch("p1", agent="architect")
+        assert len(events) == 2
+        assert events[1]["payload"]["text"] == "b"
+
+
+def test_persistence_clear_removes_files() -> None:
+    """clear() should delete all on-disk events for a project."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        resolver = lambda pid: project_root  # noqa: E731
+
+        buf = AgentEventBuffer(project_root_resolver=resolver)
+        buf.record("p1", "architect", "text_delta", {"text": "x"})
+        events_dir = project_root / ".devteam" / "agent_events"
+        assert (events_dir / "architect.jsonl").exists()
+
+        buf.clear("p1")
+
+        # File and directory gone
+        assert not (events_dir / "architect.jsonl").exists()
+        # In-memory cleared too
+        assert buf.fetch("p1") == []
+        assert buf.latest_seq("p1") == 0
+
+
+def test_persistence_seq_counter_restored_correctly_across_agents() -> None:
+    """The seq counter on hydrate must be the global max across ALL agent
+    files for this project, not per-agent. seq is project-scoped monotonic."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        resolver = lambda pid: project_root  # noqa: E731
+
+        buf1 = AgentEventBuffer(project_root_resolver=resolver)
+        buf1.record("p1", "architect", "text_delta", {"text": "a"})  # seq=1
+        buf1.record("p1", "coder", "tool_use_start", {"name": "bash"})  # seq=2
+        buf1.record("p1", "architect", "text_delta", {"text": "b"})  # seq=3
+
+        # Fresh buffer hydrates; next record() must produce seq=4, not seq=4
+        # accidentally restarted from a per-agent count
+        buf2 = AgentEventBuffer(project_root_resolver=resolver)
+        buf2.record("p1", "architect", "text_delta", {"text": "c"})
+
+        events = buf2.fetch("p1", agent="architect")
+        # Three architect events: seq=1, seq=3, seq=4 (the last one we just added)
+        seqs = [e["seq"] for e in events]
+        assert seqs == [1, 3, 4]
+
+
+def test_persistence_hydration_only_runs_once() -> None:
+    """Once a project is hydrated, subsequent calls shouldn't re-read disk.
+    We can't easily assert filesystem touch counts, but we can verify that
+    in-memory state isn't duplicated by repeated fetches."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        resolver = lambda pid: project_root  # noqa: E731
+
+        # Set up some persisted events
+        buf1 = AgentEventBuffer(project_root_resolver=resolver)
+        for i in range(5):
+            buf1.record("p1", "architect", "text_delta", {"text": f"chunk-{i}"})
+
+        buf2 = AgentEventBuffer(project_root_resolver=resolver)
+        # Multiple fetches shouldn't keep adding events to the in-memory deque
+        for _ in range(3):
+            events = buf2.fetch("p1", agent="architect")
+            assert len(events) == 5, f"Got {len(events)} events; hydration ran multiple times?"
