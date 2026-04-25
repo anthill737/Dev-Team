@@ -51,6 +51,38 @@ class Orchestrator:
         self.runner = runner
         self.settings = get_settings()
 
+    def _record_event(
+        self, agent: str, event: StreamEvent, task_id: str | None = None
+    ) -> None:
+        """Capture a StreamEvent into the per-project agent event buffer.
+
+        Called from inside the stream methods right alongside `yield event` so
+        the frontend's Agent Inspector can fetch and render the same events
+        the live WebSocket forwards. We only record events with kinds that
+        carry useful transcript content (text, tool calls, tool results,
+        usage). Internal-only kinds like 'error' or runner-specific noise
+        are still recorded so the user can see something went wrong.
+
+        project_id comes from meta.id — reading meta on every event is cheap
+        (it's an in-memory cached read on most stores) but if it ever shows
+        up in profiles we could cache it on self at construction time.
+        """
+        try:
+            meta = self.store.read_meta()
+            from .agent_event_buffer import get_buffer
+
+            get_buffer().record(
+                project_id=meta.id,
+                agent=agent,
+                kind=event.kind,
+                payload=event.payload,
+                task_id=task_id,
+            )
+        except Exception:  # noqa: BLE001
+            # The buffer is best-effort. Don't ever break a live agent stream
+            # because the in-memory buffer hiccupped.
+            logger.debug("AgentEventBuffer record failed; continuing", exc_info=True)
+
     # -------------------------------------------------------------------------
     # Interview
     # -------------------------------------------------------------------------
@@ -134,6 +166,7 @@ class Orchestrator:
                 collected_text.append(event.payload.get("text", ""))
             elif event.kind == "turn_complete":
                 final_result = event.payload.get("result")
+            self._record_event("architect", event)
             yield event
 
         # Persist assistant turn
@@ -246,6 +279,7 @@ class Orchestrator:
         ):
             if event.kind == "turn_complete":
                 final_result = event.payload.get("result")
+            self._record_event("dispatcher", event)
             yield event
 
         if final_result is not None:
@@ -400,6 +434,13 @@ class Orchestrator:
             )
 
             async for event in loop.run():
+                # ExecutionLoop tags Coder events with _agent="coder" and
+                # Reviewer events with _agent="reviewer" inline at source.
+                # Untagged events are orchestrator-level (task_start, deadlock,
+                # phase_complete, etc.) — attribute them to "orchestrator".
+                agent = event.payload.get("_agent", "orchestrator")
+                task_id = event.payload.get("_task_id")
+                self._record_event(agent, event, task_id=task_id)
                 yield event
 
             await self.store.append_decision(

@@ -415,37 +415,26 @@ def test_stream_system_messages_are_swallowed() -> None:
         assert e.kind != "system_message"
 
 
-def test_role_reminder_for_known_roles_is_imperative() -> None:
-    """The reminder prepended to the user prompt must forbid the specific
-    failure modes we've seen: Architect writing code, Coder using built-in
-    tools, etc. Brittle lookup — but the whole point of the reminder is to
-    catch the exact behaviors we're defending against."""
-    from app.agents.claude_code_runner import _role_reminder_for
+def test_role_reminders_are_disabled() -> None:
+    """Role reminders are currently disabled — the preset+append system_prompt
+    config is expected to provide enough guidance on its own. If interview
+    quality regresses to "Architect writes code inline" or "Architect writes
+    plan but skips request_approval", we re-enable them.
 
-    architect = _role_reminder_for("architect")
-    assert "ARCHITECT" in architect
-    assert "write_plan" in architect
-    assert "request_approval" in architect
-    # Critical: must convey that write_plan + request_approval are paired.
-    # Without this guidance the Architect was observed writing the plan
-    # but never submitting it for approval (project stuck in interview).
-    assert "IMMEDIATELY" in architect or "SAME response" in architect or "together" in architect.lower()
-    assert "do NOT write code" in architect.lower() or "do not write code" in architect.lower()
+    This test pins the disabled state so a future change that re-introduces
+    reminders (without thinking through whether they're needed) gets noticed.
+    """
+    from app.agents.claude_code_runner import _ROLE_REMINDERS, _role_reminder_for
 
-    dispatcher = _role_reminder_for("dispatcher")
-    assert "DISPATCHER" in dispatcher
-    assert "write_tasks" in dispatcher
+    assert _ROLE_REMINDERS == {}, (
+        "Role reminders are currently disabled. If you're re-enabling them, "
+        "update this test and document why the preset+append approach wasn't "
+        "sufficient on its own."
+    )
 
-    coder = _role_reminder_for("coder")
-    assert "CODER" in coder
-    assert "signal_outcome" in coder
-    # Must tell Coder not to use built-in Read/Write/Edit (they're blocked
-    # anyway, but the model will try if not warned)
-    assert "built-in" in coder.lower() or "blocked" in coder.lower()
-
-    reviewer = _role_reminder_for("reviewer")
-    assert "REVIEWER" in reviewer
-    assert "submit_review" in reviewer
+    # Lookup function still works — returns empty string for any role
+    for role in ("architect", "dispatcher", "coder", "reviewer"):
+        assert _role_reminder_for(role) == ""
 
 
 def test_role_reminder_unknown_role_returns_empty_string() -> None:
@@ -459,9 +448,9 @@ def test_role_reminder_unknown_role_returns_empty_string() -> None:
 
 
 def test_role_reminder_case_insensitive() -> None:
-    """Some callers might pass Role.ARCHITECT or ARCHITECT; the lookup should
-    normalize. We only use lowercase in production but normalizing is cheap
-    and prevents future bugs."""
+    """The lookup should normalize. With reminders disabled this currently
+    just verifies both inputs return empty string, but the case-insensitivity
+    contract should hold if we ever turn reminders back on."""
     from app.agents.claude_code_runner import _role_reminder_for
 
     assert _role_reminder_for("ARCHITECT") == _role_reminder_for("architect")

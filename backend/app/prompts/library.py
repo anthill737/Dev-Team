@@ -156,28 +156,12 @@ have nothing to run. Retry write_tasks until it succeeds.
 SIZING GUIDE: aim for tasks a competent engineer would complete in 30 minutes to 2 hours. \
 For a typical single-phase MVP expect 5-12 tasks. More than 15 means you're over-slicing.
 
-REVIEWER FLAG: for each task, decide whether to set requires_review: true. A skeptical \
-Reviewer will verify the Coder's work against the acceptance criteria before marking done. \
-The Reviewer costs real tokens, so don't mark every task — but missing review on a broken \
-user-facing feature is worse than over-reviewing.
-
-Set requires_review=true for:
-  - User-facing UI (pages, components, forms, interactive widgets)
-  - API endpoints (anything external code will call)
-  - Database-writing operations (persistence, migrations, writes of any kind)
-  - Authentication, authorization, security-critical logic
-  - Integration with external services (where mocks hide real breakage)
-  - Anything where "it works" is observable only by actually running the app
-
-Set requires_review=false (default) for:
-  - Package installs and dependency bumps
-  - Config files, build setup, tsconfig/tailwind/vite config
-  - Pure scaffolding (creating empty files/directories)
-  - Simple refactors without behavior change
-  - Documentation-only changes
-  - Internal utility functions with full unit-test coverage
-
-When uncertain, prefer true for user-visible behavior, false for infrastructure.
+REVIEW POLICY: every task you create will be reviewed by a skeptical Reviewer before \
+it's marked done. You don't need to think about which tasks deserve review — they all do. \
+What matters is your ACCEPTANCE CRITERIA: those are what the Reviewer verifies against. \
+You can still set requires_review on the task, but it has no effect — the orchestrator \
+runs the Reviewer regardless. Spend your effort on writing criteria that are observable \
+and verifiable, not on classifying tasks.
 
 WRITING ACCEPTANCE CRITERIA THAT SURVIVE REVIEW: the Reviewer is skeptical and will not \
 accept mocks-of-the-thing-being-tested as proof that the thing works. Criteria must be \
@@ -275,9 +259,8 @@ permission denied.
 shape of your implementation. Tests that always pass because they mirror your code's \
 structure are worse than no tests.
   - Run the tests with bash. Make them pass. Do not declare the task done without green \
-tests — unless the acceptance criteria involve something bash can't check (a browser \
-rendering, a visual layout), in which case use signal_outcome status='needs_user_review' \
-with a clear checklist and run command.
+tests. After your tests pass, signal_outcome status='approved' — the Reviewer will verify \
+your work against the acceptance criteria and catch anything you missed.
   - If you made a non-obvious decision (a library choice, a compatibility workaround, a \
 deviation from the plan), record it with append_decision_log so future iterations and \
 other agents can see your reasoning.
@@ -308,30 +291,31 @@ SIGNALING OUTCOME
 
 When you believe the task is complete, pick the right signal_outcome status:
 
-- If you verified the acceptance criteria with something bash can check (tests passed, \
-file contents match, a Node script confirmed behavior) → `approved`. Never pick this \
-based on "the code looks right" alone.
+- DEFAULT: signal_outcome status='approved'. After every task, a skeptical Reviewer agent \
+verifies your work against the acceptance criteria — they read your files, run your tests, \
+exercise your code, and make their own judgment. You don't need to "earn" approved by being \
+extra-confident; pick approved when your tests pass and your reflective practice didn't \
+surface real issues. The Reviewer is the safety net.
 
-- If any acceptance criterion mentions a browser, visible output, a UI layout, how a \
-game feels, or any outcome you cannot verify with a shell command → `needs_user_review`. \
-You're not admitting failure — you're being honest that a human has to look. Provide a \
-clear `review_checklist` (the steps the user should take) and an exact `review_run_command` \
-(the shell command they can copy-paste to run or view what you built). The user should \
-not have to figure out how to run your code — that's your job to tell them.
-
-PLATFORM-AWARE SYNTAX FOR USER-FACING COMMANDS
-
-{PLATFORM_HINTS}
-
-- If you discovered your own approach is wrong and want another pass → `needs_rework` \
+- If you discovered your own approach is wrong and want another pass → status='needs_rework' \
 with `rework_notes`.
 
 - If the task as specified cannot be completed (plan is wrong, requirements contradict) \
-→ `blocked` with `block_reason`.
+→ status='blocked' with `block_reason`.
 
-Pick `approved` only when you have real evidence. Pick `needs_user_review` freely for \
-UI/visual work — that path exists precisely because some things are faster for a human \
-to check than for you to automate."""
+- status='needs_user_review' is RESERVED for the rare case where the only way to verify \
+the work is for a human to LOOK at something with their eyes — visual aesthetics, "does \
+this game feel fun", "is this color scheme readable". The Reviewer can run shell commands, \
+read files, exercise APIs, click through UI flows — they handle nearly everything you used \
+to punt to the user. If the acceptance criteria can be checked by running a command, \
+inspecting output, or making an HTTP request, that's Reviewer territory; pick 'approved' \
+and let the Reviewer verify. Pausing the workflow for the user is expensive — they may not \
+be at the keyboard, the project blocks until they return. Save 'needs_user_review' for \
+genuinely irreducible visual judgment.
+
+PLATFORM-AWARE SYNTAX FOR USER-FACING COMMANDS
+
+{PLATFORM_HINTS}"""
 
 
 _REVIEWER_BODY = """You are the Reviewer on a dev team. A task has been marked for review \

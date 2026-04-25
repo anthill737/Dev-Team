@@ -635,21 +635,30 @@ def _review_task(task_id: str, **kwargs) -> dict[str, Any]:
     return t
 
 
-def test_loop_skips_reviewer_when_requires_review_false() -> None:
-    """If a task isn't flagged for review, the Reviewer must not run even if one
-    is configured. This is the default path — existing projects and tasks not
-    marked requires_review are unaffected by the new wiring."""
+def test_loop_runs_reviewer_even_when_requires_review_false() -> None:
+    """Reviewer is MANDATORY on every task — the per-task requires_review
+    flag is ignored. Even tasks the Dispatcher marked as not needing review
+    (e.g., scaffolding, config loaders, internal utilities) get reviewed.
+
+    This was changed from the original "respect the flag" policy after real
+    runs showed that errors in tasks the Dispatcher classified as low-stakes
+    (PDF classification, filename parsing, etc.) still slipped through Coder
+    self-approval and caused downstream pain. User policy is now: review
+    every task, no exceptions, regardless of the Dispatcher's flag.
+
+    The only path that skips the Reviewer is when no Reviewer object is
+    passed to ExecutionLoop at all (test fixtures only — production always
+    constructs one)."""
     from app.agents.reviewer import ReviewResult
 
     with tempfile.TemporaryDirectory() as tmp:
-        store = setup_project(tmp, [make_task("P1-T1")])  # no requires_review
+        store = setup_project(tmp, [make_task("P1-T1")])  # NO requires_review flag
         sandbox = ProcessSandboxExecutor(tmp)
         runner = ScriptedTaskRunner(
             [TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="done")]
         )
-        # Reviewer with a result that would blow up if consumed — proves it's not called
         reviewer = ScriptedReviewer(
-            [ReviewResult(kind="request_changes", findings=["should not run"])]
+            [ReviewResult(kind="approve", summary="ok")]
         )
         loop = ExecutionLoop(
             store=store,
@@ -659,8 +668,36 @@ def test_loop_skips_reviewer_when_requires_review_false() -> None:
         )
         collect_events(loop.run())
 
-        assert reviewer.calls == 0, "Reviewer must not run when requires_review=False"
+        # The flag was False (default) but the Reviewer ran anyway.
+        assert reviewer.calls == 1, (
+            "Reviewer must run on every task even without the requires_review flag"
+        )
         final_tasks = store.read_tasks()
+        assert final_tasks[0]["status"] == "done"
+
+
+def test_loop_skips_reviewer_only_when_no_reviewer_configured() -> None:
+    """Sanity check the only path that still skips review: when no Reviewer
+    object is constructed at all. This path exists for test fixtures and
+    would be a misconfiguration in production."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(tmp, [make_task("P1-T1")])
+        sandbox = ProcessSandboxExecutor(tmp)
+        runner = ScriptedTaskRunner(
+            [TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="done")]
+        )
+        # No reviewer passed — production always passes one, but the wire
+        # supports None for tests.
+        loop = ExecutionLoop(
+            store=store,
+            sandbox=sandbox,
+            runner=runner,
+            reviewer=None,
+        )
+        collect_events(loop.run())
+
+        final_tasks = store.read_tasks()
+        # Coder's APPROVED is accepted as-is when no Reviewer exists
         assert final_tasks[0]["status"] == "done"
 
 

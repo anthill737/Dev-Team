@@ -6,6 +6,7 @@ import {
   getPlan,
   getProject,
   getTasks,
+  openProjectIn,
   retryDispatcher,
   resumeExecution,
   addWork,
@@ -20,6 +21,7 @@ import { ArchitectChat } from "./ArchitectChat";
 import { CompletedTasks } from "./CompletedTasks";
 import { DecisionsLog } from "./DecisionsLog";
 import { LiveExecution } from "./LiveExecution";
+import { AgentInspector } from "./AgentInspector";
 import { PlanViewer } from "./PlanViewer";
 import { EditProjectModal } from "./ProjectList";
 import { StatusBar } from "./StatusBar";
@@ -184,7 +186,7 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
   // Right-column tab state. Starts on Decisions; auto-flips to Completed the first
   // time a task actually gets completed, so the user's eye lands on what just
   // happened. User can manually re-select either tab afterward.
-  const [rightTab, setRightTab] = useState<"decisions" | "completed">("decisions");
+  const [rightTab, setRightTab] = useState<"decisions" | "completed" | "agents">("decisions");
   const [autoFlippedToCompleted, setAutoFlippedToCompleted] = useState(false);
   const doneTaskCount = tasks.filter((t) => t.status === "done").length;
   useEffect(() => {
@@ -435,6 +437,19 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         onOpenSettings={() => setShowSettings(true)}
         onForceSubmitPlan={handleForceSubmitPlan}
         forceSubmittingPlan={forceSubmittingPlan}
+        onOpenIn={async (target) => {
+          try {
+            await openProjectIn(projectId, target);
+          } catch (err) {
+            alert(
+              `Couldn't open in ${target}: ${(err as Error).message}\n\n` +
+                (target === "vscode"
+                  ? "If VS Code isn't installed, install it from code.visualstudio.com. " +
+                    "If it is installed, run: Cmd/Ctrl+Shift+P → 'Shell Command: Install code command in PATH'."
+                  : "")
+            );
+          }
+        }}
       />
 
       <div className="flex-1 grid grid-cols-[2fr_2fr_1fr] min-h-0 divide-x divide-line">
@@ -497,8 +512,10 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
           <div className="flex-1 min-h-0">
             {rightTab === "decisions" ? (
               <DecisionsLog decisions={decisions} />
-            ) : (
+            ) : rightTab === "completed" ? (
               <CompletedTasks tasks={tasks} decisions={decisions} />
+            ) : (
+              <AgentInspector projectId={projectId} />
             )}
           </div>
         </div>
@@ -568,8 +585,8 @@ function RightTabs({
   doneCount,
   decisionCount,
 }: {
-  activeTab: "decisions" | "completed";
-  onSelect: (tab: "decisions" | "completed") => void;
+  activeTab: "decisions" | "completed" | "agents";
+  onSelect: (tab: "decisions" | "completed" | "agents") => void;
   doneCount: number;
   decisionCount: number;
 }) {
@@ -581,6 +598,14 @@ function RightTabs({
     }`;
   return (
     <div className="flex border-b border-line bg-panel/30">
+      <button
+        type="button"
+        onClick={() => onSelect("agents")}
+        className={tabClass(activeTab === "agents")}
+        title="Live transcript per agent: Architect, Dispatcher, Coder, Reviewer."
+      >
+        Agents
+      </button>
       <button
         type="button"
         onClick={() => onSelect("decisions")}

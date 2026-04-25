@@ -149,50 +149,38 @@ def _adapt_tools_to_mcp(tools: list[ToolSpec]) -> tuple[Any, list[str]]:
 
 
 # Role reminder strings prepended to the user prompt. Blunt, short, imperative.
-# These reinforce Dev Team's role contract at the prompt level — the model sees
-# them BEFORE the conversation content, so they can't get lost in a long history.
-# Purpose is to prevent the failure mode where the model ignores its system
-# prompt and reverts to generic Claude-style conversational responses (e.g.,
-# Architect writing code inline instead of calling write_plan).
-_ROLE_REMINDERS = {
-    "architect": (
-        "[ROLE LOCK — ARCHITECT MODE] You are the Architect. Your job is to "
-        "interview the user about what they want to build, then produce a plan "
-        "via the write_plan tool and IMMEDIATELY follow it with request_approval "
-        "in the SAME response. These two tool calls go together — a plan that "
-        "isn't submitted for approval is a dead plan. The user does not see your "
-        "plan until you call request_approval; the project will sit stuck in "
-        "interview state otherwise. You do NOT write code, show code examples, "
-        "or implement anything. If the user's request sounds simple, your first "
-        "response is still a clarifying question (scope, deployment target, "
-        "constraints). Use your tools. Do not respond with inline code."
-    ),
-    "dispatcher": (
-        "[ROLE LOCK — DISPATCHER MODE] You are the Dispatcher. Your job is to "
-        "decompose the current phase into concrete tasks via the write_tasks "
-        "tool and mark completion via mark_dispatch_complete. You do NOT write "
-        "code. You produce task descriptions with acceptance criteria. Use "
-        "your tools."
-    ),
-    "coder": (
-        "[ROLE LOCK — CODER MODE] You are the Coder. Your job is to complete "
-        "the current task by using the bash and fs_* tools, then signal the "
-        "outcome via signal_outcome. You MUST use the Dev Team tools — not the "
-        "built-in Read/Write/Edit/Bash tools (those are blocked). Read the "
-        "task via read_task first. End every task with a signal_outcome call."
-    ),
-    "reviewer": (
-        "[ROLE LOCK — REVIEWER MODE] You are the skeptical Reviewer. Your job "
-        "is to verify the Coder's work against the task's acceptance criteria "
-        "and submit a verdict via submit_review. You can read files and run "
-        "commands via bash/fs_* to verify. Do not implement fixes — reject with "
-        "specific findings instead."
-    ),
-}
+# Role reminders — currently disabled.
+#
+# In an earlier iteration we prepended a blunt role-reinforcement preamble to
+# every user prompt (e.g., "[ROLE LOCK — ARCHITECT MODE] ..."). This was added
+# to fix a failure where the Architect wrote code inline instead of conducting
+# an interview. It worked but had a cost: interview quality measurably degraded
+# vs. the API runner. The Architect started producing rigid, scripted-feeling
+# responses, repeating questions the user had already answered, and reading
+# more like a checklist executor than a senior engineer.
+#
+# Hypothesis: the system_prompt change (preset+append form, which gives us
+# Claude Code's full tool-aware system prompt + our Dev Team directives) is
+# enough on its own. The role reminder was a bandage on a symptom that the
+# preset change actually fixed. By keeping both, we were drowning the
+# Architect's full ~1400-token nuanced instructions under a recent ~100-token
+# blunt directive that dominated attention.
+#
+# This change strips the reminders. If interview quality returns to v1 (API
+# runner) levels, we're done. If the Architect regresses to writing code
+# inline, the reminder was load-bearing and we need a smarter fix — probably
+# a more nuanced reinforcement injected into the system prompt itself rather
+# than the user message.
+_ROLE_REMINDERS: dict[str, str] = {}
 
 
 def _role_reminder_for(role: str) -> str:
-    """Return a short, blunt role-reinforcement preamble for the user prompt."""
+    """Return a role-reinforcement preamble for the user prompt.
+
+    Currently always empty — see _ROLE_REMINDERS doc above for context. Kept
+    as a function (rather than inlined) so it can be re-enabled without
+    touching the call site if the experiment fails.
+    """
     return _ROLE_REMINDERS.get(role.lower(), "")
 
 

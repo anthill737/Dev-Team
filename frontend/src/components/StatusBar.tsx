@@ -51,6 +51,9 @@ interface Props {
    *  Only shown when project is in INTERVIEW state. */
   onForceSubmitPlan?: () => void;
   forceSubmittingPlan?: boolean;
+  /** Open the project root in Explorer / VS Code / Terminal. Always shown
+   *  when callback provided — quick launchers users will want frequently. */
+  onOpenIn?: (target: "explorer" | "vscode" | "terminal") => void;
 }
 
 type StatusMode = "active" | "waiting" | "idle" | "error";
@@ -79,6 +82,7 @@ export function StatusBar({
   onOpenSettings,
   onForceSubmitPlan,
   forceSubmittingPlan,
+  onOpenIn,
 }: Props) {
   const s = computeStatus(project, agentStreaming, agentCurrentActivity, blockedReason);
 
@@ -167,6 +171,40 @@ export function StatusBar({
         >
           {forceSubmittingPlan ? "Submitting..." : "Force submit plan"}
         </button>
+      )}
+      {onOpenIn && (
+        <>
+          {/* Quick launchers — always visible in the workspace so the user can
+              jump to Explorer / VS Code / Terminal without leaving Dev Team.
+              Saves a CD into the project folder every time. */}
+          <button
+            type="button"
+            onClick={() => onOpenIn("explorer")}
+            className="shrink-0 px-2 py-1 text-sm text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+            title="Open the project folder in Windows Explorer."
+            aria-label="Open in Explorer"
+          >
+            📁
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenIn("vscode")}
+            className="shrink-0 px-2 py-1 text-xs font-semibold text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+            title="Open the project in VS Code. Requires the `code` command on PATH."
+            aria-label="Open in VS Code"
+          >
+            VS
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenIn("terminal")}
+            className="shrink-0 px-2 py-1 text-xs font-mono text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+            title="Open a fresh terminal already CDed into the project folder."
+            aria-label="Open terminal"
+          >
+            {">_"}
+          </button>
+        </>
       )}
       {onOpenSettings && (
         <button

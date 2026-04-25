@@ -332,6 +332,14 @@ class ExecutionLoop:
                 async for ev in self.runner.run(ctx):
                     if ev.kind == "task_outcome":
                         outcome = ev.payload.get("outcome")
+                    # Tag the event with its origin agent so downstream consumers
+                    # (orchestrator's agent event buffer, frontend Inspector)
+                    # know which agent to attribute it to. Adding an _agent key
+                    # to the payload is non-destructive — existing consumers
+                    # ignore unknown payload keys.
+                    if "_agent" not in ev.payload:
+                        ev.payload["_agent"] = "coder"
+                        ev.payload["_task_id"] = task["id"]
                     yield ev
 
                 if outcome is None:
@@ -355,12 +363,23 @@ class ExecutionLoop:
                 # Apply the outcome to task state
                 if outcome.kind == TaskOutcomeKind.APPROVED:
                     # Reviewer gate: if this task is flagged for review and a Reviewer
-                    # is configured, the Coder's APPROVED is provisional. Reviewer's
-                    # verdict supersedes. If the Reviewer rejects, we convert to rework
-                    # (subject to max review cycles). If the Reviewer isn't configured
-                    # or the flag is false, we accept Coder's signal as-is.
+                    # Reviewer policy: MANDATORY on every task. The per-task
+                    # `requires_review` flag is ignored — user policy is that
+                    # every task gets reviewed regardless of how the Dispatcher
+                    # categorized it. Rationale: the Dispatcher was reasonably
+                    # classifying scaffolding/utility tasks as not needing
+                    # review (and was correct under the original policy), but
+                    # the user found that errors in "low-stakes" tasks like
+                    # PDF classification or filename parsing still needed to
+                    # be caught — silent self-approval was missing real bugs.
+                    #
+                    # The only condition under which we skip the Reviewer now
+                    # is if no Reviewer is configured at all (test fixtures
+                    # that explicitly construct ExecutionLoop without one).
+                    # In production, the orchestrator always provides a
+                    # Reviewer, so this branch always fires.
                     review_result: ReviewResult | None = None
-                    should_review = bool(task.get("requires_review")) and self._reviewer is not None
+                    should_review = self._reviewer is not None
 
                     if should_review:
                         review_cycles_so_far = int(task.get("review_cycles", 0))
@@ -378,6 +397,9 @@ class ExecutionLoop:
                         ):
                             if rev_ev.kind == "review_outcome":
                                 review_result = rev_ev.payload.get("result")
+                            if "_agent" not in rev_ev.payload:
+                                rev_ev.payload["_agent"] = "reviewer"
+                                rev_ev.payload["_task_id"] = task["id"]
                             yield rev_ev
 
                         # Bill the Reviewer's tokens to the reviewer model bucket

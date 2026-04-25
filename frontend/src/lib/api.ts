@@ -143,6 +143,87 @@ export async function forceSubmitPlan(id: string): Promise<ProjectDetail> {
   });
 }
 
+// Open the project's root directory in a chosen tool: Explorer, VS Code, or
+// Terminal. The backend shells out to the OS (os.startfile on Windows, open
+// on macOS, xdg-open / specific terminal emulators on Linux). Fire-and-forget;
+// we don't track the launched process.
+export async function openProjectIn(
+  id: string,
+  target: "explorer" | "vscode" | "terminal",
+): Promise<{ ok: boolean; target: string; path: string; message: string }> {
+  return request(`/api/projects/${id}/open`, {
+    method: "POST",
+    body: JSON.stringify({ target }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// --- Agent inspector ----------------------------------------------------------
+// Per-agent live transcript data. Backend captures every StreamEvent flowing
+// through the orchestrator (Architect, Dispatcher, Coder, Reviewer) into an
+// in-memory ring buffer. Frontend polls these endpoints to render the
+// AgentInspector panel.
+
+export type AgentRole =
+  | "architect"
+  | "dispatcher"
+  | "coder"
+  | "reviewer"
+  | "orchestrator";
+
+export interface AgentEvent {
+  agent: AgentRole;
+  kind: string;
+  // Payload shape depends on kind. Examples:
+  //   text_delta   → { text: "..." }
+  //   tool_use_start → { name, input, id }
+  //   tool_result  → { tool_use_id, content, is_error }
+  //   usage        → { input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens }
+  //   turn_complete → { stop_reason }
+  payload: Record<string, unknown>;
+  timestamp: number;
+  seq: number;
+  task_id: string | null;
+}
+
+export interface AgentEventsResponse {
+  events: AgentEvent[];
+  latest_seq: number;
+}
+
+export interface AgentSummaryEntry {
+  event_count: number;
+  last_seq: number;
+  last_ts: number;
+  last_kind: string | null;
+}
+
+export interface AgentSummaryResponse {
+  agents: Record<AgentRole, AgentSummaryEntry>;
+  latest_seq: number;
+}
+
+export async function getAgentEvents(
+  id: string,
+  agent?: AgentRole,
+  since: number = 0,
+): Promise<AgentEventsResponse> {
+  const qs = new URLSearchParams();
+  if (agent) qs.set("agent", agent);
+  qs.set("since", String(since));
+  return request<AgentEventsResponse>(
+    `/api/projects/${id}/agent_events?${qs.toString()}`,
+  );
+}
+
+export async function getAgentSummary(
+  id: string,
+): Promise<AgentSummaryResponse> {
+  return request<AgentSummaryResponse>(
+    `/api/projects/${id}/agent_events/summary`,
+  );
+}
+
 // Delete a project. `purge` controls whether to also remove the project's
 // .devteam/ state folder. User code outside .devteam/ is NEVER touched.
 // Backend refuses to delete a project with a running execution job.

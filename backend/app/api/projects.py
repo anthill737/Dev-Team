@@ -704,6 +704,18 @@ async def delete_project(
     # Unregister
     remaining = [e for e in registry if e["id"] != project_id]
     _save_registry(remaining)
+
+    # Reclaim the in-memory agent event buffer for this project. Cheap; just
+    # frees the deque-backed event storage and the seq counter. If the buffer
+    # is empty for this project (never recorded any events), this is a no-op.
+    try:
+        from ..orchestrator.agent_event_buffer import get_buffer
+        get_buffer().clear(project_id)
+    except Exception:  # noqa: BLE001
+        # Best-effort cleanup. Buffer state is in-memory only; on next backend
+        # restart it'll be empty anyway. No reason to fail the delete here.
+        logger.debug("Failed to clear agent event buffer for %s", project_id, exc_info=True)
+
     logger.info(
         "Deleted project %s from registry (purge=%s)", project_id, purge
     )
@@ -1294,4 +1306,242 @@ def _to_detail(store: ProjectStore) -> ProjectDetail:
         cache_read_haiku=meta.cache_read_haiku,
         cache_creation_haiku=meta.cache_creation_haiku,
         cost_usd_estimate=_estimate_cost_usd(meta),
+    )
+
+
+# ------------------------------------------------------------------------------------------------
+# "Open in..." endpoints — quick launchers for the project root in Explorer,
+# VS Code, or a terminal. Saves the user from manually CDing into the project
+# folder every time they want to inspect output, run code, or git stuff.
+#
+# These shell out to OS-specific commands (Explorer/Finder/etc., `code`,
+# `start cmd` on Windows). Fire-and-forget — we don't wait for the launched
+# process. If the target tool isn't installed (e.g., user doesn't have VS Code),
+# the launch silently no-ops at the OS level; we surface that as a 404-style
+# error to keep the UI responsive without spinning forever.
+# ------------------------------------------------------------------------------------------------
+
+
+class OpenInRequest(BaseModel):
+    target: str = Field(
+        ..., pattern="^(explorer|vscode|terminal)$",
+        description="Where to open the project: explorer | vscode | terminal",
+    )
+
+
+class OpenInResponse(BaseModel):
+    ok: bool
+    target: str
+    path: str
+    message: str
+
+
+@router.post("/{project_id}/open", response_model=OpenInResponse)
+async def open_project_in(
+    project_id: str,
+    body: OpenInRequest,
+    _api_key: str = Depends(get_api_key),
+) -> OpenInResponse:
+    """Open the project's root directory in the user's chosen tool.
+
+    Three targets:
+      - explorer: native file manager (Windows Explorer / macOS Finder / xdg-open)
+      - vscode:   VS Code via the `code` CLI (must be on PATH)
+      - terminal: a fresh terminal already CDed into the project root
+
+    All launches are fire-and-forget. We don't capture the launched process or
+    wait for it to exit — the user opens it, uses it, closes it on their own
+    schedule. Errors here are limited to "tool not found" (e.g., `code` not on
+    PATH) which we surface so the user knows what to install.
+
+    Cross-platform: Windows is the primary target, but macOS/Linux fallbacks
+    are provided since our launcher scripts are PowerShell-only and someone
+    running the backend directly on macOS/Linux should still get reasonable
+    behavior.
+    """
+    import platform
+    import shutil
+    import subprocess
+
+    store = _load_store(project_id)
+    root_path = str(store.root)
+    target = body.target
+    system = platform.system()  # 'Windows', 'Darwin', 'Linux'
+
+    try:
+        if target == "explorer":
+            if system == "Windows":
+                # Use os.startfile — Windows-native, opens Explorer at the path.
+                # subprocess with explorer.exe also works but startfile is simpler.
+                import os as _os
+                _os.startfile(root_path)  # type: ignore[attr-defined]
+                msg = "Opened in Windows Explorer."
+            elif system == "Darwin":
+                subprocess.Popen(["open", root_path])
+                msg = "Opened in Finder."
+            else:
+                subprocess.Popen(["xdg-open", root_path])
+                msg = "Opened in file manager."
+
+        elif target == "vscode":
+            # Look for `code` on PATH. On Windows this is normally
+            # %LocalAppData%\Programs\Microsoft VS Code\bin\code (added by the
+            # installer's "Add to PATH" option). If missing, surface a clear
+            # error rather than silently failing.
+            code_cmd = shutil.which("code")
+            if code_cmd is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "VS Code's `code` command isn't on your PATH. Install "
+                        "VS Code, then in VS Code: Cmd/Ctrl+Shift+P → 'Shell "
+                        "Command: Install code command in PATH'."
+                    ),
+                )
+            # Use shell=False; pass args as list. On Windows, Popen with a list
+            # works fine for the `code` CLI.
+            subprocess.Popen([code_cmd, root_path])
+            msg = "Opened in VS Code."
+
+        elif target == "terminal":
+            if system == "Windows":
+                # `start cmd /K cd /D "<path>"` — opens a new cmd window, CDs
+                # into the project, and stays open (/K) so the user has a shell.
+                # /D handles drive changes (path may be on a different drive
+                # than the current one). Use shell=True since `start` is a
+                # cmd.exe builtin, not a standalone executable.
+                subprocess.Popen(
+                    f'start "" cmd /K cd /D "{root_path}"',
+                    shell=True,
+                )
+                msg = "Opened a terminal in the project folder."
+            elif system == "Darwin":
+                # Open Terminal.app at the path. AppleScript would give more
+                # control but `open -a Terminal` is good enough.
+                subprocess.Popen(["open", "-a", "Terminal", root_path])
+                msg = "Opened in Terminal.app."
+            else:
+                # Try common Linux terminals in order; if none found, fail loud.
+                for term in ("gnome-terminal", "konsole", "xterm"):
+                    if shutil.which(term):
+                        if term == "gnome-terminal":
+                            subprocess.Popen([term, "--working-directory", root_path])
+                        elif term == "konsole":
+                            subprocess.Popen([term, "--workdir", root_path])
+                        else:  # xterm
+                            subprocess.Popen([term, "-e", f"cd {root_path} && bash"])
+                        break
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No supported terminal emulator found.",
+                    )
+                msg = f"Opened in terminal."
+
+        else:
+            # Defensive — pattern validator should have caught this.
+            raise HTTPException(status_code=400, detail=f"Unknown target: {target}")
+
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Open-in failed: target=%s path=%s", target, root_path)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to open in {target}: {exc}",
+        ) from exc
+
+    logger.info("Opened project %s in %s (%s)", project_id, target, root_path)
+    return OpenInResponse(ok=True, target=target, path=root_path, message=msg)
+
+
+# ------------------------------------------------------------------------------------------------
+# Agent event buffer endpoints — feed the frontend's Agent Inspector panel.
+#
+# The buffer captures every StreamEvent flowing through the orchestrator,
+# tagged by which agent (Architect / Dispatcher / Coder / Reviewer / orchestrator)
+# produced it. Frontend polls these endpoints to render unified per-agent
+# transcripts. See app/orchestrator/agent_event_buffer.py for the data model.
+# ------------------------------------------------------------------------------------------------
+
+
+class AgentEventEntry(BaseModel):
+    agent: str
+    kind: str
+    payload: dict[str, Any]
+    timestamp: float
+    seq: int
+    task_id: str | None = None
+
+
+class AgentEventsResponse(BaseModel):
+    events: list[AgentEventEntry]
+    latest_seq: int
+
+
+@router.get("/{project_id}/agent_events", response_model=AgentEventsResponse)
+async def get_agent_events(
+    project_id: str,
+    agent: str | None = None,
+    since: int = 0,
+    _api_key: str = Depends(get_api_key),
+) -> AgentEventsResponse:
+    """Fetch buffered agent events for the project.
+
+    Query params:
+      - agent (optional): restrict to one role: architect | dispatcher | coder
+        | reviewer | orchestrator. Omit for all agents merged in seq order.
+      - since (optional, default 0): return only events with seq > since.
+        Frontend tracks the highest seq seen and polls with `since=<that>`
+        to get tail-only updates without re-fetching the whole buffer.
+
+    The response includes `latest_seq` so the frontend can use it as the
+    next `since` value without scanning the events list. Cheaper than
+    `max(e.seq for e in events)` when there are many events or none.
+    """
+    # Validate project exists (404 if not — same shape as other endpoints)
+    _load_store(project_id)
+
+    from ..orchestrator.agent_event_buffer import get_buffer
+
+    buf = get_buffer()
+    events = buf.fetch(project_id, agent=agent, since=since)
+    return AgentEventsResponse(
+        events=[AgentEventEntry(**e) for e in events],
+        latest_seq=buf.latest_seq(project_id),
+    )
+
+
+class AgentSummaryEntry(BaseModel):
+    event_count: int
+    last_seq: int
+    last_ts: float
+    last_kind: str | None
+
+
+class AgentSummaryResponse(BaseModel):
+    # Map of agent role to summary. Frontend uses this to show event counts
+    # and activity indicators on the tab strip without fetching all events.
+    agents: dict[str, AgentSummaryEntry]
+    latest_seq: int
+
+
+@router.get("/{project_id}/agent_events/summary", response_model=AgentSummaryResponse)
+async def get_agent_events_summary(
+    project_id: str, _api_key: str = Depends(get_api_key)
+) -> AgentSummaryResponse:
+    """Per-agent activity summary for the inspector tab strip.
+
+    Cheap to call — returns counts and last-event metadata without the events
+    themselves. Frontend can poll this on a faster cadence (every 1s) than
+    the full events endpoint to update tab indicators.
+    """
+    _load_store(project_id)
+    from ..orchestrator.agent_event_buffer import get_buffer
+
+    buf = get_buffer()
+    summary = buf.agent_summary(project_id)
+    return AgentSummaryResponse(
+        agents={k: AgentSummaryEntry(**v) for k, v in summary.items()},
+        latest_seq=buf.latest_seq(project_id),
     )

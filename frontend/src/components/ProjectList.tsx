@@ -4,6 +4,7 @@ import {
   createProject,
   deleteProject,
   listProjects,
+  openProjectIn,
   updateProject,
 } from "../lib/api";
 import type { ProjectSummary } from "../lib/types";
@@ -100,6 +101,60 @@ export function ProjectList({ onSelect }: Props) {
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusBadge status={p.status} />
+                  {/* Open-in buttons: quick launchers for the project root.
+                      Same hover-reveal pattern as gear/trash so the card stays
+                      uncluttered until you mouse over it. Each button calls
+                      the backend's /open endpoint, which shells out to the OS.
+                      stopPropagation prevents the card's onClick (which navs
+                      into the project) from firing when you click a button. */}
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await openProjectIn(p.id, "explorer");
+                      } catch (err) {
+                        alert(`Couldn't open in Explorer: ${(err as Error).message}`);
+                      }
+                    }}
+                    title="Open the project folder in Windows Explorer."
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded"
+                    aria-label={`Open ${p.name} in Explorer`}
+                  >
+                    📁
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await openProjectIn(p.id, "vscode");
+                      } catch (err) {
+                        alert(`Couldn't open in VS Code: ${(err as Error).message}`);
+                      }
+                    }}
+                    title="Open the project in VS Code. Requires the `code` command on PATH."
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded font-semibold"
+                    aria-label={`Open ${p.name} in VS Code`}
+                  >
+                    VS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await openProjectIn(p.id, "terminal");
+                      } catch (err) {
+                        alert(`Couldn't open terminal: ${(err as Error).message}`);
+                      }
+                    }}
+                    title="Open a fresh terminal already CDed into the project folder."
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded font-mono"
+                    aria-label={`Open terminal in ${p.name}`}
+                  >
+                    {">_"}
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => {
