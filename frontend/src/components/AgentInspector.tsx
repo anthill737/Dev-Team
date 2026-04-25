@@ -259,7 +259,7 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
                 setSelected(tab);
                 setAutoScroll(true);
               }}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors border-b-2 ${
+              className={`flex items-center gap-1.5 px-3 py-2 text-[15px] font-medium transition-colors border-b-2 ${
                 isSelected
                   ? "border-emerald-500 text-gray-100 bg-panel/30"
                   : "border-transparent text-gray-400 hover:text-gray-200"
@@ -270,7 +270,7 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
               )}
               <span>{TAB_LABELS[tab]}</span>
               {eventCount > 0 && (
-                <span className="text-[10px] text-gray-500">
+                <span className="text-[13px] text-gray-500">
                   ({eventCount})
                 </span>
               )}
@@ -280,7 +280,7 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
       </div>
 
       {error && (
-        <div className="px-3 py-1 text-[11px] text-amber-400 bg-amber-950/20 border-b border-amber-900/40">
+        <div className="px-3 py-1 text-[13px] text-amber-400 bg-amber-950/20 border-b border-amber-900/40">
           Polling error: {error} (will retry)
         </div>
       )}
@@ -289,10 +289,10 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
       <div
         ref={transcriptRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-2 text-xs font-mono"
+        className="flex-1 overflow-y-auto px-3 py-2 text-[15px] font-mono"
       >
         {visibleEvents.length === 0 ? (
-          <div className="text-gray-500 text-xs italic">
+          <div className="text-gray-500 text-[15px] italic">
             {selected === "all"
               ? "No agent activity yet. Events will appear here as agents run."
               : `No ${TAB_LABELS[selected]} activity yet.`}
@@ -304,7 +304,7 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
 
       {!autoScroll && (
         <div className="px-3 py-1 border-t border-line bg-panel/30 flex items-center justify-between">
-          <span className="text-[10px] text-gray-500">
+          <span className="text-[13px] text-gray-500">
             Auto-scroll paused (scrolled up)
           </span>
           <button
@@ -316,7 +316,7 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
                   transcriptRef.current.scrollHeight;
               }
             }}
-            className="text-[10px] text-emerald-400 hover:text-emerald-300"
+            className="text-[13px] text-emerald-400 hover:text-emerald-300"
           >
             Jump to bottom ↓
           </button>
@@ -488,37 +488,37 @@ function BlockView({
               {block.name}
             </span>
             {block.taskId && (
-              <span className="text-[10px] text-gray-500 shrink-0">
+              <span className="text-[13px] text-gray-500 shrink-0">
                 {block.taskId}
               </span>
             )}
           </div>
-          <span className="text-gray-500 text-[10px]">
+          <span className="text-gray-500 text-[13px]">
             {expanded ? "▾" : "▸"}
           </span>
         </button>
         {!expanded && (
-          <div className="px-2 pb-1 text-[10px] text-gray-500 truncate">
+          <div className="px-2 pb-1 text-[13px] text-gray-500 truncate">
             {inputPreview}
           </div>
         )}
         {expanded && (
           <div className="px-2 pb-2 space-y-1.5">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-gray-500 mt-1">
+              <div className="text-[13px] uppercase tracking-wider text-gray-500 mt-1">
                 Input
               </div>
-              <pre className="text-[11px] text-gray-300 bg-black/40 rounded px-2 py-1 overflow-x-auto">
+              <pre className="text-[13px] text-gray-300 bg-black/40 rounded px-2 py-1 overflow-x-auto">
                 {inputStr}
               </pre>
             </div>
             {block.result && (
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-gray-500">
+                <div className="text-[13px] uppercase tracking-wider text-gray-500">
                   Result {block.result.isError && "(error)"}
                 </div>
                 <pre
-                  className={`text-[11px] rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap ${
+                  className={`text-[13px] rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap ${
                     block.result.isError
                       ? "text-red-300 bg-red-950/30"
                       : "text-gray-300 bg-black/40"
@@ -529,7 +529,7 @@ function BlockView({
               </div>
             )}
             {!block.result && (
-              <div className="text-[10px] text-gray-500 italic">
+              <div className="text-[13px] text-gray-500 italic">
                 Waiting for result…
               </div>
             )}
@@ -541,7 +541,7 @@ function BlockView({
 
   // status block — faint divider with kind label
   return (
-    <div className="text-[10px] text-gray-500 border-t border-line/30 pt-1">
+    <div className="text-[13px] text-gray-500 border-t border-line/30 pt-1">
       {showAgentBadge && <AgentBadge agent={block.agent} />}
       <span className="uppercase tracking-wider">{block.kindLabel}</span>
       {Object.keys(block.payload).length > 0 && (
@@ -563,7 +563,7 @@ function AgentBadge({ agent }: { agent: AgentRole }) {
   };
   return (
     <span
-      className={`inline-block px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider mr-1.5 ${colorMap[agent]}`}
+      className={`inline-block px-1.5 py-0.5 rounded text-xs uppercase tracking-wider mr-1.5 ${colorMap[agent]}`}
     >
       {agent}
     </span>

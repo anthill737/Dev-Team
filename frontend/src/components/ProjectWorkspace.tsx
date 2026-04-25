@@ -342,15 +342,15 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
           <button
             type="button"
             onClick={onBack}
-            className="text-sm text-gray-400 hover:text-gray-200"
+            className="text-[17px] text-gray-400 hover:text-gray-200"
           >
             ← Projects
           </button>
-          <div className="text-sm font-semibold">{project?.name ?? "Loading..."}</div>
+          <div className="text-[17px] font-semibold">{project?.name ?? "Loading..."}</div>
           {project && (
             <>
-              <span className="text-xs text-gray-500">·</span>
-              <span className="text-xs text-gray-500 font-mono">{project.root_path}</span>
+              <span className="text-[15px] text-gray-500">·</span>
+              <span className="text-[15px] text-gray-500 font-mono">{project.root_path}</span>
             </>
           )}
         </div>
@@ -369,7 +369,7 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
               ? `Estimated API cost. ${cachePct}% of input served from cache (billed at 10% of base rate).`
               : "Estimated API cost based on Anthropic public pricing. Not an actual bill.";
           return (
-            <div className="text-xs text-gray-500 font-mono flex items-center gap-3">
+            <div className="text-[15px] text-gray-500 font-mono flex items-center gap-3">
               <span>
                 {project.tokens_used.toLocaleString()} / {project.project_token_budget.toLocaleString()}{" "}
                 tokens
@@ -554,7 +554,7 @@ function CenterTabs({
   taskCount: number;
 }) {
   const tabClass = (active: boolean) =>
-    `px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${
+    `px-3 py-1.5 text-[15px] font-medium border-b-2 transition-colors ${
       active
         ? "border-accent text-gray-100"
         : "border-transparent text-gray-500 hover:text-gray-300"
@@ -591,7 +591,7 @@ function RightTabs({
   decisionCount: number;
 }) {
   const tabClass = (active: boolean) =>
-    `px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${
+    `px-3 py-1.5 text-[15px] font-medium border-b-2 transition-colors ${
       active
         ? "border-accent text-gray-100"
         : "border-transparent text-gray-500 hover:text-gray-300"

@@ -52,21 +52,21 @@ export function ProjectList({ onSelect }: Props) {
         <button
           type="button"
           onClick={() => setShowCreate(true)}
-          className="text-sm bg-accent text-black font-medium px-3 py-1.5 rounded hover:bg-amber-400"
+          className="text-[17px] bg-accent text-black font-medium px-3 py-1.5 rounded hover:bg-amber-400"
         >
           New project
         </button>
       </div>
 
       {loading ? (
-        <div className="text-sm text-gray-500">Loading...</div>
+        <div className="text-[17px] text-gray-500">Loading...</div>
       ) : projects.length === 0 ? (
         <div className="bg-panel border border-line rounded-lg p-10 text-center">
           <p className="text-gray-400 mb-4">No projects yet.</p>
           <button
             type="button"
             onClick={() => setShowCreate(true)}
-            className="text-sm bg-accent text-black font-medium px-3 py-1.5 rounded hover:bg-amber-400"
+            className="text-[17px] bg-accent text-black font-medium px-3 py-1.5 rounded hover:bg-amber-400"
           >
             Start your first project
           </button>
@@ -91,7 +91,7 @@ export function ProjectList({ onSelect }: Props) {
                   {p.name}
                   {p.is_running && (
                     <span
-                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300"
+                      className="inline-flex items-center gap-1 text-[13px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300"
                       title="Background execution job running — work continues even when you're not viewing this project."
                     >
                       <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -118,7 +118,7 @@ export function ProjectList({ onSelect }: Props) {
                       }
                     }}
                     title="Open the project folder in Windows Explorer."
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[15px] text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded"
                     aria-label={`Open ${p.name} in Explorer`}
                   >
                     📁
@@ -134,7 +134,7 @@ export function ProjectList({ onSelect }: Props) {
                       }
                     }}
                     title="Open the project in VS Code. Requires the `code` command on PATH."
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded font-semibold"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[15px] text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded font-semibold"
                     aria-label={`Open ${p.name} in VS Code`}
                   >
                     VS
@@ -150,7 +150,7 @@ export function ProjectList({ onSelect }: Props) {
                       }
                     }}
                     title="Open a fresh terminal already CDed into the project folder."
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded font-mono"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[15px] text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded font-mono"
                     aria-label={`Open terminal in ${p.name}`}
                   >
                     {">_"}
@@ -162,7 +162,7 @@ export function ProjectList({ onSelect }: Props) {
                       setEditing(p);
                     }}
                     title="Project settings — name, path, budgets, time limit, OS."
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[15px] text-gray-500 hover:text-gray-200 px-1.5 py-0.5 rounded"
                     aria-label={`Settings for ${p.name}`}
                   >
                     ⚙
@@ -175,15 +175,15 @@ export function ProjectList({ onSelect }: Props) {
                       setDeleting(p);
                     }}
                     title="Remove this project from Dev Team's list. Your code stays on disk."
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 hover:text-red-400 px-1.5 py-0.5 rounded"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[15px] text-gray-500 hover:text-red-400 px-1.5 py-0.5 rounded"
                     aria-label={`Delete ${p.name}`}
                   >
                     🗑
                   </button>
                 </div>
               </div>
-              <div className="text-xs text-gray-500 mt-1 font-mono">{p.root_path}</div>
-              <div className="text-xs text-gray-600 mt-2 flex gap-4">
+              <div className="text-[15px] text-gray-500 mt-1 font-mono">{p.root_path}</div>
+              <div className="text-[15px] text-gray-600 mt-2 flex gap-4">
                 <span>{p.tokens_used.toLocaleString()} tokens used</span>
                 <span>{p.tasks_completed} tasks done</span>
               </div>
@@ -236,7 +236,7 @@ function StatusBadge({ status }: { status: string }) {
         : status === "paused"
           ? "bg-gray-800 text-gray-400"
           : "bg-amber-900/40 text-amber-300";
-  return <span className={`text-xs px-2 py-0.5 rounded ${color}`}>{status}</span>;
+  return <span className={`text-[15px] px-2 py-0.5 rounded ${color}`}>{status}</span>;
 }
 
 function DeleteProjectModal({
@@ -271,14 +271,14 @@ function DeleteProjectModal({
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50">
       <div className="bg-panel border border-line rounded-lg p-6 w-full max-w-md">
-        <h2 className="text-lg font-semibold mb-2">Delete project</h2>
-        <p className="text-sm text-gray-400 mb-1">
+        <h2 className="text-[19px] font-semibold mb-2">Delete project</h2>
+        <p className="text-[17px] text-gray-400 mb-1">
           Remove <span className="text-gray-200 font-medium">{project.name}</span> from
           Dev Team?
         </p>
-        <p className="text-xs text-gray-500 font-mono mb-4 break-all">{project.root_path}</p>
+        <p className="text-[15px] text-gray-500 font-mono mb-4 break-all">{project.root_path}</p>
 
-        <div className="bg-ink border border-line rounded px-3 py-2 mb-4 text-xs text-gray-400">
+        <div className="bg-ink border border-line rounded px-3 py-2 mb-4 text-[15px] text-gray-400">
           By default, <span className="text-gray-200">only the entry in Dev Team's list
           is removed.</span> Your code on disk is not touched.
         </div>
@@ -290,9 +290,9 @@ function DeleteProjectModal({
             onChange={(e) => setPurge(e.target.checked)}
             className="mt-1"
           />
-          <span className="text-sm">
+          <span className="text-[17px]">
             Also delete Dev Team's state folder (<code className="bg-ink px-1">.devteam/</code>)
-            <div className="text-xs text-gray-500 mt-0.5">
+            <div className="text-[15px] text-gray-500 mt-0.5">
               Removes the plan, task list, decisions log, and review scratch for this
               project. Your own code files are still untouched.
             </div>
@@ -300,14 +300,14 @@ function DeleteProjectModal({
         </label>
 
         {isRunning && (
-          <div className="mb-4 text-xs text-amber-300 bg-amber-950/40 border border-amber-900/50 rounded px-3 py-2">
+          <div className="mb-4 text-[15px] text-amber-300 bg-amber-950/40 border border-amber-900/50 rounded px-3 py-2">
             This project has a running execution job. Pause it or wait for it to finish
             before deleting.
           </div>
         )}
 
         {error && (
-          <div className="mb-4 text-sm text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          <div className="mb-4 text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
             {error}
           </div>
         )}
@@ -317,7 +317,7 @@ function DeleteProjectModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="text-sm px-3 py-1.5 rounded hover:bg-ink disabled:opacity-40"
+            className="text-[17px] px-3 py-1.5 rounded hover:bg-ink disabled:opacity-40"
           >
             Cancel
           </button>
@@ -325,7 +325,7 @@ function DeleteProjectModal({
             type="button"
             disabled={isRunning || submitting}
             onClick={submit}
-            className="text-sm bg-red-800 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded disabled:opacity-40"
+            className="text-[17px] bg-red-800 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded disabled:opacity-40"
           >
             {submitting ? "Deleting..." : "Delete"}
           </button>
@@ -459,27 +459,27 @@ export function EditProjectModal({
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50">
       <div className="bg-panel border border-line rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4">Edit project</h2>
+        <h2 className="text-[19px] font-semibold mb-4">Edit project</h2>
 
         {loading ? (
-          <div className="text-sm text-gray-500">Loading current settings…</div>
+          <div className="text-[17px] text-gray-500">Loading current settings…</div>
         ) : (
           <>
-            <label className="block text-sm font-medium mb-1">Project name</label>
+            <label className="block text-[17px] font-medium mb-1">Project name</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-4 focus:outline-none focus:border-accent"
+              className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-4 focus:outline-none focus:border-accent"
             />
 
-            <label className="block text-sm font-medium mb-1">Project directory</label>
+            <label className="block text-[17px] font-medium mb-1">Project directory</label>
             <input
               value={rootPath}
               onChange={(e) => setRootPath(e.target.value)}
               disabled={!rootPathEditable}
-              className="w-full bg-ink border border-line rounded px-3 py-2 text-sm font-mono mb-1 focus:outline-none focus:border-accent disabled:opacity-50"
+              className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] font-mono mb-1 focus:outline-none focus:border-accent disabled:opacity-50"
             />
-            <p className="text-xs text-gray-500 mb-4">
+            <p className="text-[15px] text-gray-500 mb-4">
               {rootPathEditable ? (
                 <>
                   If you move the folder to a new location, update this after
@@ -491,7 +491,7 @@ export function EditProjectModal({
               )}
             </p>
 
-            <label className="block text-sm font-medium mb-1">
+            <label className="block text-[17px] font-medium mb-1">
               Project token budget
             </label>
             <input
@@ -499,10 +499,10 @@ export function EditProjectModal({
               min={1}
               value={projectBudget}
               onChange={(e) => setProjectBudget(e.target.value)}
-              className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-4"
+              className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-4"
             />
 
-            <label className="block text-sm font-medium mb-1">
+            <label className="block text-[17px] font-medium mb-1">
               Default per-task token budget
             </label>
             <input
@@ -510,10 +510,10 @@ export function EditProjectModal({
               min={1}
               value={taskBudget}
               onChange={(e) => setTaskBudget(e.target.value)}
-              className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-4"
+              className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-4"
             />
 
-            <label className="block text-sm font-medium mb-1">
+            <label className="block text-[17px] font-medium mb-1">
               Max iterations per task
             </label>
             <input
@@ -521,17 +521,17 @@ export function EditProjectModal({
               min={1}
               value={maxIterations}
               onChange={(e) => setMaxIterations(e.target.value)}
-              className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-4"
+              className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-4"
             />
 
-            <label className="block text-sm font-medium mb-1">
+            <label className="block text-[17px] font-medium mb-1">
               Wall clock limit
             </label>
             <div className="flex gap-2 mb-2">
               <button
                 type="button"
                 onClick={() => setWallClockMode("unlimited")}
-                className={`flex-1 text-sm py-1.5 rounded border ${
+                className={`flex-1 text-[17px] py-1.5 rounded border ${
                   wallClockMode === "unlimited"
                     ? "bg-accent text-black border-accent"
                     : "border-line text-gray-300 hover:border-gray-600"
@@ -542,7 +542,7 @@ export function EditProjectModal({
               <button
                 type="button"
                 onClick={() => setWallClockMode("hours")}
-                className={`flex-1 text-sm py-1.5 rounded border ${
+                className={`flex-1 text-[17px] py-1.5 rounded border ${
                   wallClockMode === "hours"
                     ? "bg-accent text-black border-accent"
                     : "border-line text-gray-300 hover:border-gray-600"
@@ -558,23 +558,23 @@ export function EditProjectModal({
                 step={0.5}
                 value={hours}
                 onChange={(e) => setHours(e.target.value)}
-                className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-4"
+                className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-4"
               />
             )}
 
-            <label className="block text-sm font-medium mb-1">Your operating system</label>
+            <label className="block text-[17px] font-medium mb-1">Your operating system</label>
             <select
               value={userPlatform}
               onChange={(e) =>
                 setUserPlatform(e.target.value as "windows" | "macos" | "linux")
               }
-              className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-1"
+              className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-1"
             >
               <option value="windows">Windows (PowerShell)</option>
               <option value="macos">macOS (zsh/bash)</option>
               <option value="linux">Linux (bash)</option>
             </select>
-            <p className="text-xs text-gray-500 mb-4">
+            <p className="text-[15px] text-gray-500 mb-4">
               Controls shell syntax the Coder and Reviewer use for commands you're
               meant to run yourself (verification steps, task notes). Auto-detected
               when you created the project — only change it if you moved the project
@@ -584,7 +584,7 @@ export function EditProjectModal({
         )}
 
         {error && (
-          <div className="mb-4 text-sm text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          <div className="mb-4 text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
             {error}
           </div>
         )}
@@ -594,7 +594,7 @@ export function EditProjectModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="text-sm px-3 py-1.5 rounded hover:bg-ink disabled:opacity-40"
+            className="text-[17px] px-3 py-1.5 rounded hover:bg-ink disabled:opacity-40"
           >
             Cancel
           </button>
@@ -602,7 +602,7 @@ export function EditProjectModal({
             type="button"
             disabled={loading || submitting}
             onClick={submit}
-            className="text-sm bg-accent text-black font-medium px-3 py-1.5 rounded disabled:opacity-40 hover:bg-amber-400"
+            className="text-[17px] bg-accent text-black font-medium px-3 py-1.5 rounded disabled:opacity-40 hover:bg-amber-400"
           >
             {submitting ? "Saving…" : "Save"}
           </button>
@@ -668,69 +668,69 @@ function CreateProjectModal({
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50">
       <div className="bg-panel border border-line rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4">New project</h2>
+        <h2 className="text-[19px] font-semibold mb-4">New project</h2>
 
-        <label className="block text-sm font-medium mb-1">Project name</label>
+        <label className="block text-[17px] font-medium mb-1">Project name</label>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="My SaaS MVP"
-          className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-4 focus:outline-none focus:border-accent"
+          className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-4 focus:outline-none focus:border-accent"
         />
 
-        <label className="block text-sm font-medium mb-1">Project directory (absolute path)</label>
+        <label className="block text-[17px] font-medium mb-1">Project directory (absolute path)</label>
         <input
           value={path}
           onChange={(e) => setPath(e.target.value)}
           placeholder="C:\\Users\\you\\Projects\\my-saas"
-          className="w-full bg-ink border border-line rounded px-3 py-2 text-sm font-mono mb-1 focus:outline-none focus:border-accent"
+          className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] font-mono mb-1 focus:outline-none focus:border-accent"
         />
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-[15px] text-gray-500 mb-4">
           Where the Coder will work. Created if it doesn't exist.
         </p>
 
-        <label className="block text-sm font-medium mb-1">Project token budget</label>
+        <label className="block text-[17px] font-medium mb-1">Project token budget</label>
         <input
           type="number"
           min={1}
           value={projectBudget}
           onChange={(e) => setProjectBudget(e.target.value)}
-          className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-1"
+          className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-1"
         />
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-[15px] text-gray-500 mb-4">
           Hard ceiling across the whole project. Execution stops if this is hit.
         </p>
 
-        <label className="block text-sm font-medium mb-1">Default per-task token budget</label>
+        <label className="block text-[17px] font-medium mb-1">Default per-task token budget</label>
         <input
           type="number"
           min={1}
           value={taskBudget}
           onChange={(e) => setTaskBudget(e.target.value)}
-          className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-1"
+          className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-1"
         />
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-[15px] text-gray-500 mb-4">
           Each task gets this budget. The Coder stops trying if it runs out.
         </p>
 
-        <label className="block text-sm font-medium mb-1">Max iterations per task</label>
+        <label className="block text-[17px] font-medium mb-1">Max iterations per task</label>
         <input
           type="number"
           min={1}
           value={maxIterations}
           onChange={(e) => setMaxIterations(e.target.value)}
-          className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-1"
+          className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-1"
         />
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-[15px] text-gray-500 mb-4">
           How many times the Coder retries a failed task before escalating.
         </p>
 
-        <label className="block text-sm font-medium mb-1">Wall clock limit</label>
+        <label className="block text-[17px] font-medium mb-1">Wall clock limit</label>
         <div className="flex gap-2 mb-4">
           <button
             type="button"
             onClick={() => setWallClockMode("unlimited")}
-            className={`flex-1 text-sm py-1.5 rounded border ${
+            className={`flex-1 text-[17px] py-1.5 rounded border ${
               wallClockMode === "unlimited"
                 ? "bg-accent text-black border-accent"
                 : "border-line text-gray-300 hover:border-gray-600"
@@ -741,7 +741,7 @@ function CreateProjectModal({
           <button
             type="button"
             onClick={() => setWallClockMode("hours")}
-            className={`flex-1 text-sm py-1.5 rounded border ${
+            className={`flex-1 text-[17px] py-1.5 rounded border ${
               wallClockMode === "hours"
                 ? "bg-accent text-black border-accent"
                 : "border-line text-gray-300 hover:border-gray-600"
@@ -757,12 +757,12 @@ function CreateProjectModal({
             step={0.5}
             value={hours}
             onChange={(e) => setHours(e.target.value)}
-            className="w-full bg-ink border border-line rounded px-3 py-2 text-sm mb-4"
+            className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] mb-4"
           />
         )}
 
         {error && (
-          <div className="mb-4 text-sm text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          <div className="mb-4 text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
             {error}
           </div>
         )}
@@ -771,7 +771,7 @@ function CreateProjectModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-sm px-3 py-1.5 rounded hover:bg-ink"
+            className="text-[17px] px-3 py-1.5 rounded hover:bg-ink"
           >
             Cancel
           </button>
@@ -779,7 +779,7 @@ function CreateProjectModal({
             type="button"
             disabled={!canSubmit}
             onClick={submit}
-            className="text-sm bg-accent text-black font-medium px-3 py-1.5 rounded disabled:opacity-40 hover:bg-amber-400"
+            className="text-[17px] bg-accent text-black font-medium px-3 py-1.5 rounded disabled:opacity-40 hover:bg-amber-400"
           >
             {submitting ? "Creating..." : "Create"}
           </button>

@@ -115,25 +115,25 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
         <div className="px-4 py-3 flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline gap-2 mb-2">
-              <span className="text-[10px] uppercase tracking-wider font-semibold text-red-300">
+              <span className="text-[13px] uppercase tracking-wider font-semibold text-red-300">
                 Execution paused — you interrupted this task
               </span>
-              <span className="text-xs font-mono text-gray-400">{task.id}</span>
-              <span className="text-xs text-gray-200 truncate">{task.title}</span>
+              <span className="text-[15px] font-mono text-gray-400">{task.id}</span>
+              <span className="text-[15px] text-gray-200 truncate">{task.title}</span>
             </div>
 
             {latestNote && (
               <div className="mb-3">
-                <div className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1">
+                <div className="text-[13px] uppercase tracking-wider text-amber-400/80 mb-1">
                   Your note
                 </div>
-                <div className="text-sm text-amber-100 bg-amber-950/40 border border-amber-900/50 rounded px-3 py-2 whitespace-pre-wrap">
+                <div className="text-[17px] text-amber-100 bg-amber-950/40 border border-amber-900/50 rounded px-3 py-2 whitespace-pre-wrap">
                   {latestNote}
                 </div>
               </div>
             )}
 
-            <div className="text-xs text-gray-400 mb-2">
+            <div className="text-[15px] text-gray-400 mb-2">
               Resume to send the Coder back to this task (your note is visible
               in the task's notes — the Coder will see it on its next iteration).
               Or send additional feedback to guide the rework.
@@ -143,7 +143,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
               <div className="mt-3 p-2 border border-line rounded bg-black/30">
                 <label
                   htmlFor="interrupt-feedback"
-                  className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1"
+                  className="block text-[13px] uppercase tracking-wider text-gray-500 mb-1"
                 >
                   Additional feedback for the Coder
                 </label>
@@ -153,13 +153,13 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                   onChange={(e) => setFeedback(e.target.value)}
                   placeholder="e.g., Actually, also make sure X, and avoid approach Y."
                   rows={3}
-                  className="w-full text-xs bg-black/50 border border-line rounded px-2 py-1.5 text-gray-200 font-mono"
+                  className="w-full text-[15px] bg-black/50 border border-line rounded px-2 py-1.5 text-gray-200 font-mono"
                   disabled={submitting}
                 />
               </div>
             )}
 
-            {error && <div className="mt-2 text-xs text-red-400">{error}</div>}
+            {error && <div className="mt-2 text-[15px] text-red-400">{error}</div>}
           </div>
 
           {/* Action buttons — different labels for interrupt context */}
@@ -170,7 +170,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                   type="button"
                   onClick={handleApprove}
                   disabled={submitting}
-                  className="px-3 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded disabled:opacity-50"
+                  className="px-3 py-2 text-[15px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded disabled:opacity-50"
                   title="Send the Coder back to this task. Your note is in the task's notes; the Coder will see it on its next iteration."
                 >
                   {submitting ? "..." : "Resume Coder"}
@@ -179,7 +179,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                   type="button"
                   onClick={() => setShowRejectForm(true)}
                   disabled={submitting}
-                  className="px-3 py-2 text-xs bg-amber-800/80 hover:bg-amber-700/90 text-amber-100 rounded disabled:opacity-50"
+                  className="px-3 py-2 text-[15px] bg-amber-800/80 hover:bg-amber-700/90 text-amber-100 rounded disabled:opacity-50"
                   title="Add more feedback before the Coder retries."
                 >
                   Add more feedback
@@ -191,7 +191,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                   type="button"
                   onClick={handleReject}
                   disabled={submitting || !feedback.trim()}
-                  className="px-3 py-2 text-xs font-semibold bg-amber-700 hover:bg-amber-600 text-white rounded disabled:opacity-50"
+                  className="px-3 py-2 text-[15px] font-semibold bg-amber-700 hover:bg-amber-600 text-white rounded disabled:opacity-50"
                 >
                   {submitting ? "..." : "Send feedback"}
                 </button>
@@ -202,7 +202,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                     setFeedback("");
                   }}
                   disabled={submitting}
-                  className="px-3 py-2 text-xs bg-gray-800 hover:bg-gray-700 text-gray-200 rounded disabled:opacity-50"
+                  className="px-3 py-2 text-[15px] bg-gray-800 hover:bg-gray-700 text-gray-200 rounded disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -219,14 +219,14 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
       <div className="px-4 py-3 flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 mb-1">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-400">
+            <span className="text-[13px] uppercase tracking-wider font-semibold text-amber-400">
               Needs your review
             </span>
-            <span className="text-xs font-mono text-gray-400">{task.id}</span>
-            <span className="text-xs text-gray-200 truncate">{task.title}</span>
+            <span className="text-[15px] font-mono text-gray-400">{task.id}</span>
+            <span className="text-[15px] text-gray-200 truncate">{task.title}</span>
           </div>
           {summary && (
-            <div className="text-xs text-gray-300 mb-3">{summary}</div>
+            <div className="text-[15px] text-gray-300 mb-3">{summary}</div>
           )}
 
           <div className="grid grid-cols-[1fr_1fr] gap-4 mt-2">
@@ -234,17 +234,17 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
             <div>
               {runCommand && (
                 <div className="mb-3">
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                  <div className="text-[13px] uppercase tracking-wider text-gray-500 mb-1">
                     How to run it
                   </div>
                   <div className="flex items-center gap-2">
-                    <code className="flex-1 text-xs font-mono bg-black/40 text-emerald-300 px-2 py-1.5 rounded break-all">
+                    <code className="flex-1 text-[15px] font-mono bg-black/40 text-emerald-300 px-2 py-1.5 rounded break-all">
                       {runCommand}
                     </code>
                     <button
                       type="button"
                       onClick={copyRunCommand}
-                      className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded shrink-0"
+                      className="text-[15px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded shrink-0"
                       title="Copy to clipboard"
                     >
                       {copied ? "Copied!" : "Copy"}
@@ -255,7 +255,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
 
               {checklist.length > 0 && (
                 <div>
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                  <div className="text-[13px] uppercase tracking-wider text-gray-500 mb-1">
                     Check this ({checkedItems.size}/{checklist.length})
                   </div>
                   <ul className="space-y-1">
@@ -270,7 +270,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                         />
                         <label
                           htmlFor={`check-${i}`}
-                          className={`text-xs cursor-pointer ${
+                          className={`text-[15px] cursor-pointer ${
                             checkedItems.has(i)
                               ? "text-gray-500 line-through"
                               : "text-gray-200"
@@ -289,14 +289,14 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
             <div>
               {filesToCheck.length > 0 && (
                 <div>
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                  <div className="text-[13px] uppercase tracking-wider text-gray-500 mb-1">
                     Files to look at
                   </div>
                   <ul className="space-y-0.5">
                     {filesToCheck.map((path, i) => (
                       <li
                         key={i}
-                        className="text-xs font-mono text-gray-300 break-all"
+                        className="text-[15px] font-mono text-gray-300 break-all"
                       >
                         {path}
                       </li>
@@ -307,12 +307,12 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
 
               {task.acceptance_criteria.length > 0 && (
                 <div className={filesToCheck.length > 0 ? "mt-3" : ""}>
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                  <div className="text-[13px] uppercase tracking-wider text-gray-500 mb-1">
                     Acceptance criteria
                   </div>
                   <ul className="space-y-0.5">
                     {task.acceptance_criteria.map((c, i) => (
-                      <li key={i} className="text-xs text-gray-400">
+                      <li key={i} className="text-[15px] text-gray-400">
                         • {c}
                       </li>
                     ))}
@@ -327,7 +327,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
             <div className="mt-3 p-2 border border-line rounded bg-black/30">
               <label
                 htmlFor="reject-feedback"
-                className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1"
+                className="block text-[13px] uppercase tracking-wider text-gray-500 mb-1"
               >
                 What needs to change?
               </label>
@@ -337,14 +337,14 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                 onChange={(e) => setFeedback(e.target.value)}
                 placeholder="e.g., The canvas is rendering but it's 480x270 instead of 960x540. Check the width/height attributes."
                 rows={3}
-                className="w-full text-xs bg-black/50 border border-line rounded px-2 py-1.5 text-gray-200 font-mono"
+                className="w-full text-[15px] bg-black/50 border border-line rounded px-2 py-1.5 text-gray-200 font-mono"
                 disabled={submitting}
               />
             </div>
           )}
 
           {error && (
-            <div className="mt-2 text-xs text-red-400">{error}</div>
+            <div className="mt-2 text-[15px] text-red-400">{error}</div>
           )}
         </div>
 
@@ -356,7 +356,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                 type="button"
                 onClick={handleApprove}
                 disabled={submitting}
-                className={`px-3 py-2 text-xs font-semibold rounded transition-colors ${
+                className={`px-3 py-2 text-[15px] font-semibold rounded transition-colors ${
                   allChecked
                     ? "bg-emerald-600 hover:bg-emerald-500 text-white"
                     : "bg-emerald-700/70 hover:bg-emerald-600/80 text-white"
@@ -373,7 +373,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                 type="button"
                 onClick={() => setShowRejectForm(true)}
                 disabled={submitting}
-                className="px-3 py-2 text-xs bg-red-900/60 hover:bg-red-800/80 text-red-100 rounded disabled:opacity-50"
+                className="px-3 py-2 text-[15px] bg-red-900/60 hover:bg-red-800/80 text-red-100 rounded disabled:opacity-50"
               >
                 Needs changes
               </button>
@@ -384,7 +384,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                 type="button"
                 onClick={handleReject}
                 disabled={submitting || !feedback.trim()}
-                className="px-3 py-2 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white rounded disabled:opacity-50"
+                className="px-3 py-2 text-[15px] font-semibold bg-red-600 hover:bg-red-500 text-white rounded disabled:opacity-50"
               >
                 {submitting ? "..." : "Send back"}
               </button>
@@ -396,7 +396,7 @@ export function TaskReviewPanel({ projectId, task, onReviewed }: Props) {
                   setError(null);
                 }}
                 disabled={submitting}
-                className="px-3 py-2 text-xs bg-gray-800 hover:bg-gray-700 text-gray-200 rounded"
+                className="px-3 py-2 text-[15px] bg-gray-800 hover:bg-gray-700 text-gray-200 rounded"
               >
                 Cancel
               </button>

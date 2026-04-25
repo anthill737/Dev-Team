@@ -101,15 +101,15 @@ export function StatusBar({
     >
       <StatusIndicator mode={s.mode} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium truncate">{s.label}</div>
-        {s.detail && <div className="text-xs opacity-80 truncate">{s.detail}</div>}
+        <div className="text-[17px] font-medium truncate">{s.label}</div>
+        {s.detail && <div className="text-[15px] opacity-80 truncate">{s.detail}</div>}
       </div>
       {project?.status === "blocked" && onRetryDispatcher && (
         <button
           type="button"
           onClick={onRetryDispatcher}
           disabled={retryingDispatcher}
-          className="shrink-0 px-3 py-1 text-xs font-medium bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white rounded"
+          className="shrink-0 px-3 py-1 text-[15px] font-medium bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white rounded"
         >
           {retryingDispatcher ? "Retrying..." : "Retry Dispatcher"}
         </button>
@@ -119,7 +119,7 @@ export function StatusBar({
           type="button"
           onClick={onResumeExecution}
           disabled={resumingExecution}
-          className="shrink-0 px-3 py-1 text-xs font-medium bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white rounded"
+          className="shrink-0 px-3 py-1 text-[15px] font-medium bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white rounded"
           title="Reset blocked tasks to pending and resume the execution loop."
         >
           {resumingExecution ? "Resuming..." : "Resume execution"}
@@ -130,7 +130,7 @@ export function StatusBar({
           type="button"
           onClick={onAddWork}
           disabled={addingWork}
-          className="shrink-0 px-3 py-1 text-xs font-medium bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded"
+          className="shrink-0 px-3 py-1 text-[15px] font-medium bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded"
           title="Reopen this project to add a new feature, fix, or refactor. The Architect will interview you about the incremental work and append a new phase to the plan."
         >
           {addingWork ? "Opening..." : "Add more work"}
@@ -144,7 +144,7 @@ export function StatusBar({
             type="button"
             onClick={onPause}
             disabled={pausing}
-            className="shrink-0 px-3 py-1 text-xs font-medium bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white rounded"
+            className="shrink-0 px-3 py-1 text-[15px] font-medium bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white rounded"
             title="Pause between tasks. The currently running Coder or Reviewer will finish first, then the loop halts. Close the backend window for a hard stop."
           >
             {pausing ? "Pausing..." : "Pause"}
@@ -155,7 +155,7 @@ export function StatusBar({
           type="button"
           onClick={onResumePaused}
           disabled={resumingPaused}
-          className="shrink-0 px-3 py-1 text-xs font-medium bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded"
+          className="shrink-0 px-3 py-1 text-[15px] font-medium bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded"
           title="Resume the execution loop. It picks up at the next task."
         >
           {resumingPaused ? "Resuming..." : "Resume"}
@@ -166,7 +166,7 @@ export function StatusBar({
           type="button"
           onClick={onForceSubmitPlan}
           disabled={forceSubmittingPlan}
-          className="shrink-0 px-3 py-1 text-xs font-medium bg-orange-800 hover:bg-orange-700 disabled:opacity-50 text-white rounded"
+          className="shrink-0 px-3 py-1 text-[15px] font-medium bg-orange-800 hover:bg-orange-700 disabled:opacity-50 text-white rounded"
           title="If the Architect is stuck logging 'handing off' without calling request_approval, this bypasses it and submits whatever's in plan.md for your approval. Requires plan.md to have content — edit it manually first if needed."
         >
           {forceSubmittingPlan ? "Submitting..." : "Force submit plan"}
@@ -180,7 +180,7 @@ export function StatusBar({
           <button
             type="button"
             onClick={() => onOpenIn("explorer")}
-            className="shrink-0 px-2 py-1 text-sm text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+            className="shrink-0 px-2 py-1 text-[17px] text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
             title="Open the project folder in Windows Explorer."
             aria-label="Open in Explorer"
           >
@@ -189,7 +189,7 @@ export function StatusBar({
           <button
             type="button"
             onClick={() => onOpenIn("vscode")}
-            className="shrink-0 px-2 py-1 text-xs font-semibold text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+            className="shrink-0 px-2 py-1 text-[15px] font-semibold text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
             title="Open the project in VS Code. Requires the `code` command on PATH."
             aria-label="Open in VS Code"
           >
@@ -198,7 +198,7 @@ export function StatusBar({
           <button
             type="button"
             onClick={() => onOpenIn("terminal")}
-            className="shrink-0 px-2 py-1 text-xs font-mono text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+            className="shrink-0 px-2 py-1 text-[15px] font-mono text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
             title="Open a fresh terminal already CDed into the project folder."
             aria-label="Open terminal"
           >
@@ -210,7 +210,7 @@ export function StatusBar({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="shrink-0 px-2 py-1 text-sm text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
+          className="shrink-0 px-2 py-1 text-[17px] text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded"
           title="Project settings — name, path, budgets, OS. Safe to open any time."
           aria-label="Open project settings"
         >

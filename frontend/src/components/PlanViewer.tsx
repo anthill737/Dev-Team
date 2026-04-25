@@ -48,11 +48,11 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-line flex items-baseline justify-between">
         <div>
-          <h2 className="text-sm font-semibold">Plan</h2>
-          <p className="text-xs text-gray-500">plan.md — updated by the Architect</p>
+          <h2 className="text-[17px] font-semibold">Plan</h2>
+          <p className="text-[15px] text-gray-500">plan.md — updated by the Architect</p>
         </div>
         {awaitingApproval && (
-          <span className="text-xs px-2 py-0.5 rounded bg-amber-900/40 text-amber-300">
+          <span className="text-[15px] px-2 py-0.5 rounded bg-amber-900/40 text-amber-300">
             awaiting approval
           </span>
         )}
@@ -60,11 +60,11 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
 
       <div className="flex-1 overflow-y-auto p-4">
         {plan.trim() ? (
-          <div className="prose-chat text-sm max-w-none">
+          <div className="prose-chat text-[17px] max-w-none">
             <ReactMarkdown>{plan}</ReactMarkdown>
           </div>
         ) : (
-          <div className="text-sm text-gray-500 italic">
+          <div className="text-[17px] text-gray-500 italic">
             No plan yet. The Architect will write <code className="bg-ink px-1">plan.md</code>{" "}
             once the interview is thorough enough.
           </div>
@@ -74,7 +74,7 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
       {awaitingApproval && (
         <div className="border-t border-line p-3">
           {error && (
-            <div className="mb-2 text-xs text-red-400 bg-red-950/40 border border-red-900/50 rounded px-2 py-1">
+            <div className="mb-2 text-[15px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-2 py-1">
               {error}
             </div>
           )}
@@ -85,7 +85,7 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
                 onChange={(e) => setFeedback(e.target.value)}
                 placeholder="What should the Architect revise? Be specific."
                 rows={3}
-                className="w-full bg-ink border border-line rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-accent"
+                className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] resize-none focus:outline-none focus:border-accent"
               />
               <div className="flex gap-2 justify-end">
                 <button
@@ -94,7 +94,7 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
                     setShowReject(false);
                     setFeedback("");
                   }}
-                  className="text-sm px-3 py-1.5 rounded hover:bg-ink"
+                  className="text-[17px] px-3 py-1.5 rounded hover:bg-ink"
                 >
                   Cancel
                 </button>
@@ -102,7 +102,7 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
                   type="button"
                   disabled={busy || !feedback.trim()}
                   onClick={reject}
-                  className="text-sm bg-panel border border-line px-3 py-1.5 rounded disabled:opacity-40 hover:border-gray-600"
+                  className="text-[17px] bg-panel border border-line px-3 py-1.5 rounded disabled:opacity-40 hover:border-gray-600"
                 >
                   Send feedback
                 </button>
@@ -114,7 +114,7 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
                 type="button"
                 disabled={busy}
                 onClick={() => setShowReject(true)}
-                className="flex-1 text-sm bg-panel border border-line py-2 rounded disabled:opacity-40 hover:border-gray-600"
+                className="flex-1 text-[17px] bg-panel border border-line py-2 rounded disabled:opacity-40 hover:border-gray-600"
               >
                 Request changes
               </button>
@@ -122,7 +122,7 @@ export function PlanViewer({ plan, project, onApprove, onReject }: Props) {
                 type="button"
                 disabled={busy}
                 onClick={approve}
-                className="flex-1 text-sm bg-accent text-black font-medium py-2 rounded disabled:opacity-40 hover:bg-amber-400"
+                className="flex-1 text-[17px] bg-accent text-black font-medium py-2 rounded disabled:opacity-40 hover:bg-amber-400"
               >
                 {busy ? "..." : "Approve plan"}
               </button>

@@ -34,10 +34,10 @@ export function TasksView({
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-line">
-        <h2 className="text-sm font-semibold">
+        <h2 className="text-[17px] font-semibold">
           Tasks{currentPhase ? ` — ${currentPhase}` : ""}
         </h2>
-        <p className="text-xs text-gray-500">
+        <p className="text-[15px] text-gray-500">
           tasks.json — decomposed by the Dispatcher
         </p>
       </div>
@@ -48,13 +48,13 @@ export function TasksView({
         )}
 
         {dispatcherError && (
-          <div className="text-sm text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          <div className="text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
             Dispatcher error: {dispatcherError}
           </div>
         )}
 
         {phaseTasks.length === 0 && !dispatcherRunning && (
-          <div className="text-sm text-gray-500 italic">
+          <div className="text-[17px] text-gray-500 italic">
             {project?.status === "await_approval"
               ? "Tasks will appear here once you approve the plan."
               : project?.status === "dispatching"
@@ -74,7 +74,7 @@ export function TasksView({
 
         {otherTasks.length > 0 && (
           <details className="mt-4">
-            <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
+            <summary className="text-[15px] text-gray-500 cursor-pointer hover:text-gray-400">
               Show {otherTasks.length} task{otherTasks.length === 1 ? "" : "s"} from other phases
             </summary>
             <div className="mt-2 space-y-2 opacity-70">
@@ -98,7 +98,7 @@ function DispatcherLiveStatus({ activity }: { activity: ToolEvent[] }) {
   const lastToolUse = [...activity].reverse().find((a) => a.kind === "use");
   return (
     <div className="bg-amber-950/30 border border-amber-800/50 rounded p-3">
-      <div className="flex items-center gap-2 text-sm text-amber-200 font-medium">
+      <div className="flex items-center gap-2 text-[17px] text-amber-200 font-medium">
         <div className="relative h-2 w-2">
           <div className="absolute inset-0 rounded-full bg-amber-400 animate-ping opacity-70" />
           <div className="absolute inset-0 rounded-full bg-amber-400" />
@@ -106,11 +106,11 @@ function DispatcherLiveStatus({ activity }: { activity: ToolEvent[] }) {
         Dispatcher is decomposing the phase
       </div>
       {lastToolUse && (
-        <div className="mt-1.5 text-xs font-mono text-amber-300/80">
+        <div className="mt-1.5 text-[15px] font-mono text-amber-300/80">
           → {lastToolUse.name}
         </div>
       )}
-      <div className="mt-2 text-xs text-amber-200/60">
+      <div className="mt-2 text-[15px] text-amber-200/60">
         Reading the plan, drafting tasks with acceptance criteria, validating the structure...
       </div>
     </div>
@@ -185,18 +185,18 @@ function TaskCard({
       >
         <div className="flex items-baseline justify-between gap-2">
           <div className="flex items-baseline gap-2 min-w-0 flex-1">
-            <span className="text-xs font-mono text-gray-500 flex-shrink-0">{task.id}</span>
-            <span className="text-sm font-medium truncate">{task.title}</span>
+            <span className="text-[15px] font-mono text-gray-500 flex-shrink-0">{task.id}</span>
+            <span className="text-[17px] font-medium truncate">{task.title}</span>
           </div>
           <StatusBadge status={task.status} />
         </div>
         {!expanded && task.description && (
-          <div className="mt-1 text-xs text-gray-400 line-clamp-2">{task.description}</div>
+          <div className="mt-1 text-[15px] text-gray-400 line-clamp-2">{task.description}</div>
         )}
       </button>
 
       {expanded && (
-        <div className="mt-3 space-y-2 text-xs">
+        <div className="mt-3 space-y-2 text-[15px]">
           <div>
             <div className="text-gray-500 mb-1">Description</div>
             <div className="text-gray-300 whitespace-pre-wrap">{task.description}</div>
@@ -274,7 +274,7 @@ function TaskCard({
                     resetEditState();
                     setEditing(true);
                   }}
-                  className="text-xs text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded px-2 py-1"
+                  className="text-[15px] text-gray-400 hover:text-gray-200 border border-line hover:border-gray-600 rounded px-2 py-1"
                   title="Edit this task's budget or add a note the Coder will see on next iteration."
                 >
                   ⚙ Settings
@@ -288,7 +288,7 @@ function TaskCard({
                       min={1}
                       value={budget}
                       onChange={(e) => setBudget(e.target.value)}
-                      className="w-full bg-ink border border-line rounded px-2 py-1 text-xs font-mono"
+                      className="w-full bg-ink border border-line rounded px-2 py-1 text-[15px] font-mono"
                     />
                   </div>
                   <div>
@@ -300,7 +300,7 @@ function TaskCard({
                       onChange={(e) => setNote(e.target.value)}
                       rows={2}
                       placeholder="e.g. try using the react-query library"
-                      className="w-full bg-ink border border-line rounded px-2 py-1 text-xs"
+                      className="w-full bg-ink border border-line rounded px-2 py-1 text-[15px]"
                     />
                   </div>
                   {error && (
@@ -316,7 +316,7 @@ function TaskCard({
                         setEditing(false);
                       }}
                       disabled={submitting}
-                      className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 disabled:opacity-40"
+                      className="text-[15px] text-gray-400 hover:text-gray-200 px-2 py-1 disabled:opacity-40"
                     >
                       Cancel
                     </button>
@@ -327,7 +327,7 @@ function TaskCard({
                         submitEdit({ interrupt: true });
                       }}
                       disabled={submitting || !note.trim()}
-                      className="text-xs bg-red-800 hover:bg-red-700 text-white font-medium px-2 py-1 rounded disabled:opacity-40"
+                      className="text-[15px] bg-red-800 hover:bg-red-700 text-white font-medium px-2 py-1 rounded disabled:opacity-40"
                       title={
                         !note.trim()
                           ? "Add a note first — interrupt needs a message."
@@ -343,7 +343,7 @@ function TaskCard({
                         submitEdit();
                       }}
                       disabled={submitting}
-                      className="text-xs bg-accent hover:bg-amber-400 text-black font-medium px-2 py-1 rounded disabled:opacity-40"
+                      className="text-[15px] bg-accent hover:bg-amber-400 text-black font-medium px-2 py-1 rounded disabled:opacity-40"
                       title="Save the note/budget. The Coder picks it up on its next iteration — execution continues."
                     >
                       {submitting ? "Saving…" : "Save"}
@@ -371,7 +371,7 @@ function StatusBadge({ status }: { status: Task["status"] }) {
             ? "bg-blue-900/40 text-blue-300"
             : "bg-gray-800 text-gray-400";
   return (
-    <span className={`text-xs px-2 py-0.5 rounded flex-shrink-0 ${color}`}>
+    <span className={`text-[15px] px-2 py-0.5 rounded flex-shrink-0 ${color}`}>
       {status.replace("_", " ")}
     </span>
   );

@@ -8,11 +8,11 @@ export function DecisionsLog({ decisions }: Props) {
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-line">
-        <h2 className="text-sm font-semibold">Decisions</h2>
-        <p className="text-xs text-gray-500">decisions.log — agent research, rationale, state changes</p>
+        <h2 className="text-[17px] font-semibold">Decisions</h2>
+        <p className="text-[15px] text-gray-500">decisions.log — agent research, rationale, state changes</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-xs">
+      <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-[15px]">
         {decisions.length === 0 ? (
           <div className="text-gray-500 italic font-sans">
             Nothing logged yet. Research findings and key decisions will appear here as the

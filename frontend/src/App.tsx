@@ -33,7 +33,7 @@ export default function App() {
 
   if (screen.kind === "loading") {
     return (
-      <div className="h-full flex items-center justify-center text-sm text-gray-500">
+      <div className="h-full flex items-center justify-center text-[17px] text-gray-500">
         Loading...
       </div>
     );

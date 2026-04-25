@@ -47,11 +47,11 @@ export function ArchitectChat({
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-line flex items-baseline justify-between">
         <div>
-          <h2 className="text-sm font-semibold">Architect</h2>
-          <p className="text-xs text-gray-500">Senior engineer, interviewing you</p>
+          <h2 className="text-[17px] font-semibold">Architect</h2>
+          <p className="text-[15px] text-gray-500">Senior engineer, interviewing you</p>
         </div>
         {(tokensThisTurn.input > 0 || tokensThisTurn.output > 0) && (
-          <div className="text-xs text-gray-500 font-mono">
+          <div className="text-[15px] text-gray-500 font-mono">
             {tokensThisTurn.input.toLocaleString()}↓ {tokensThisTurn.output.toLocaleString()}↑
           </div>
         )}
@@ -59,7 +59,7 @@ export function ArchitectChat({
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
         {interview.length === 0 && !streaming && (
-          <div className="text-sm text-gray-500 italic">
+          <div className="text-[17px] text-gray-500 italic">
             The Architect will interview you to understand what you want to build. Start by
             describing your project idea — the more context you give, the better.
           </div>
@@ -74,11 +74,11 @@ export function ArchitectChat({
         {streaming && partialText && <MessageBubble role="assistant" content={partialText} streaming />}
 
         {streaming && !partialText && toolActivity.length === 0 && (
-          <div className="text-sm text-gray-500 italic">Architect is thinking...</div>
+          <div className="text-[17px] text-gray-500 italic">Architect is thinking...</div>
         )}
 
         {error && (
-          <div className="text-sm text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          <div className="text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
             {error}
           </div>
         )}
@@ -86,7 +86,7 @@ export function ArchitectChat({
 
       <div className="p-3 border-t border-line">
         {disabled && disabledReason && (
-          <div className="text-xs text-gray-500 mb-2">{disabledReason}</div>
+          <div className="text-[15px] text-gray-500 mb-2">{disabledReason}</div>
         )}
         <div className="flex gap-2">
           <textarea
@@ -101,7 +101,7 @@ export function ArchitectChat({
             placeholder={disabled ? "" : "Describe your project, or answer the Architect's question..."}
             disabled={disabled}
             rows={3}
-            className="flex-1 bg-ink border border-line rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-accent disabled:opacity-50"
+            className="flex-1 bg-ink border border-line rounded px-3 py-2 text-[17px] resize-none focus:outline-none focus:border-accent disabled:opacity-50"
           />
           <button
             type="button"
@@ -112,7 +112,7 @@ export function ArchitectChat({
             Send
           </button>
         </div>
-        <p className="text-xs text-gray-600 mt-2">Cmd+Enter to send</p>
+        <p className="text-[15px] text-gray-600 mt-2">Cmd+Enter to send</p>
       </div>
     </div>
   );
@@ -131,7 +131,7 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm prose-chat ${
+        className={`max-w-[85%] rounded-lg px-3 py-2 text-[17px] prose-chat ${
           isUser
             ? "bg-amber-900/30 border border-amber-900/40"
             : "bg-panel border border-line"
@@ -157,7 +157,7 @@ const MessageBubble = memo(function MessageBubble({
 
 function ToolActivityPanel({ events }: { events: ToolEvent[] }) {
   return (
-    <div className="bg-ink/60 border border-line rounded p-2 text-xs font-mono space-y-1">
+    <div className="bg-ink/60 border border-line rounded p-2 text-[15px] font-mono space-y-1">
       {events.map((ev, i) => (
         <div key={i} className={ev.isError ? "text-red-400" : "text-gray-400"}>
           <span className="text-gray-600">{ev.kind === "use" ? "→" : "←"}</span>{" "}

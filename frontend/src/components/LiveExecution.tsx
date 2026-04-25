@@ -30,8 +30,8 @@ export function LiveExecution({ stream }: Props) {
     <div className="border border-line rounded-lg bg-panel/30 overflow-hidden flex flex-col max-h-full">
       <div className="px-3 py-2 border-b border-line flex items-center justify-between">
         <div>
-          <div className="text-xs font-semibold text-gray-200">Live execution</div>
-          <div className="text-[10px] text-gray-500">
+          <div className="text-[15px] font-semibold text-gray-200">Live execution</div>
+          <div className="text-[13px] text-gray-500">
             {stream.status === "running"
               ? stream.currentTask
                 ? `Coder working on ${stream.currentTask.task_id} · iteration ${stream.currentTask.iteration}`
@@ -53,10 +53,10 @@ export function LiveExecution({ stream }: Props) {
       {/* Current activity — the most prominent piece; updates in real time */}
       {stream.currentActivity && (
         <div className="px-3 py-2 border-b border-line/50 bg-panel/40">
-          <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">
+          <div className="text-[13px] uppercase tracking-wide text-gray-500 mb-0.5">
             Right now
           </div>
-          <div className="text-xs text-gray-200 font-mono truncate">
+          <div className="text-[15px] text-gray-200 font-mono truncate">
             {stream.currentActivity}
           </div>
         </div>
@@ -65,12 +65,12 @@ export function LiveExecution({ stream }: Props) {
       {/* Completed tasks in this run */}
       {stream.completedInRun.length > 0 && (
         <div className="px-3 py-2 border-b border-line/50">
-          <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+          <div className="text-[13px] uppercase tracking-wide text-gray-500 mb-1">
             Completed this run
           </div>
           <div className="space-y-0.5">
             {stream.completedInRun.slice(-5).map((c, i) => (
-              <div key={i} className="flex items-baseline gap-2 text-xs">
+              <div key={i} className="flex items-baseline gap-2 text-[15px]">
                 <span
                   className={`font-mono ${outcomeColor(c.outcome_kind)}`}
                   title={c.outcome_kind}
@@ -87,7 +87,7 @@ export function LiveExecution({ stream }: Props) {
       {/* Activity feed — scrolling log */}
       <div
         ref={feedRef}
-        className="flex-1 overflow-y-auto p-2 space-y-0.5 font-mono text-[11px] min-h-[120px]"
+        className="flex-1 overflow-y-auto p-2 space-y-0.5 font-mono text-[13px] min-h-[120px]"
       >
         {stream.recentActivity.length === 0 && (
           <div className="text-gray-600 italic text-center py-4">
@@ -100,7 +100,7 @@ export function LiveExecution({ stream }: Props) {
       </div>
 
       {stream.error && (
-        <div className="px-3 py-2 border-t border-red-900 bg-red-950/40 text-xs text-red-300">
+        <div className="px-3 py-2 border-t border-red-900 bg-red-950/40 text-[15px] text-red-300">
           {stream.error}
         </div>
       )}

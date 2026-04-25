@@ -29,12 +29,12 @@ export function KeySetup({ onSuccess }: Props) {
     <div className="h-full flex items-center justify-center p-8">
       <div className="w-full max-w-lg">
         <h1 className="text-2xl font-semibold mb-1">Dev Team</h1>
-        <p className="text-sm text-gray-400 mb-8">
+        <p className="text-[17px] text-gray-400 mb-8">
           Autonomous software development, powered by Claude.
         </p>
 
         <div className="bg-panel border border-line rounded-lg p-6">
-          <label className="block text-sm font-medium mb-2">Anthropic API key</label>
+          <label className="block text-[17px] font-medium mb-2">Anthropic API key</label>
           <input
             type="password"
             value={key}
@@ -44,9 +44,9 @@ export function KeySetup({ onSuccess }: Props) {
             }}
             placeholder="sk-ant-..."
             autoFocus
-            className="w-full bg-ink border border-line rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-accent"
+            className="w-full bg-ink border border-line rounded px-3 py-2 text-[17px] font-mono focus:outline-none focus:border-accent"
           />
-          <p className="text-xs text-gray-500 mt-2">
+          <p className="text-[15px] text-gray-500 mt-2">
             Get a key at{" "}
             <a
               href="https://console.anthropic.com"
@@ -60,7 +60,7 @@ export function KeySetup({ onSuccess }: Props) {
           </p>
 
           {error && (
-            <div className="mt-4 text-sm text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+            <div className="mt-4 text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
               {error}
             </div>
           )}
