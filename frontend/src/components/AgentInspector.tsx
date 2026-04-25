@@ -588,6 +588,7 @@ function FlatBlocks({
 }) {
   type Block =
     | { kind: "text"; agent: AgentRole; text: string; firstSeq: number }
+    | { kind: "thinking"; agent: AgentRole; text: string; firstSeq: number }
     | {
         kind: "tool";
         agent: AgentRole;
@@ -617,6 +618,22 @@ function FlatBlocks({
       } else {
         blocks.push({
           kind: "text",
+          agent: e.agent,
+          text,
+          firstSeq: e.seq,
+        });
+      }
+    } else if (e.kind === "thinking_delta") {
+      // Coalesce consecutive thinking deltas from the same agent into a
+      // single block. Same coalescing as text_delta — the SDK can stream
+      // thinking in chunks and we don't want N tiny "thinking" rows.
+      const text = String(e.payload.text ?? "");
+      const last = blocks[blocks.length - 1];
+      if (last && last.kind === "thinking" && last.agent === e.agent) {
+        last.text += text;
+      } else {
+        blocks.push({
+          kind: "thinking",
           agent: e.agent,
           text,
           firstSeq: e.seq,
@@ -695,6 +712,7 @@ function BlockView({
 }: {
   block:
     | { kind: "text"; agent: AgentRole; text: string; firstSeq: number }
+    | { kind: "thinking"; agent: AgentRole; text: string; firstSeq: number }
     | {
         kind: "tool";
         agent: AgentRole;
@@ -714,6 +732,49 @@ function BlockView({
   showAgentBadge: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+
+  if (block.kind === "thinking") {
+    // Thinking is the model's private reasoning before its user-facing
+    // response. Render it dim + italic to distinguish from spoken text,
+    // matching how Claude Code's terminal displays thinking blocks.
+    // Collapsed by default with a short preview — extended thinking can
+    // run hundreds of words and we don't want it dominating the panel.
+    const preview = block.text.length > 140
+      ? block.text.slice(0, 140) + "…"
+      : block.text;
+    return (
+      <div className="text-gray-500 italic text-[14px] min-w-0">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full flex items-start gap-2 text-left hover:text-gray-400 group"
+        >
+          <span className="shrink-0 mt-0.5 text-[12px]">
+            {expanded ? "▾" : "▸"}
+          </span>
+          <span className="text-[12px] uppercase tracking-wider shrink-0 mt-0.5 text-gray-600">
+            thinking
+          </span>
+          {!expanded && (
+            <span
+              className="break-words min-w-0"
+              style={{ overflowWrap: "anywhere" }}
+            >
+              {preview}
+            </span>
+          )}
+        </button>
+        {expanded && (
+          <div
+            className="mt-1 ml-7 whitespace-pre-wrap break-words leading-relaxed border-l-2 border-line/40 pl-3"
+            style={{ overflowWrap: "anywhere" }}
+          >
+            {block.text}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (block.kind === "text") {
     return (
@@ -750,6 +811,24 @@ function BlockView({
       return compact.length > 80 ? compact.slice(0, 80) + "…" : compact;
     })();
 
+    // For bash and fs_write tools, surface the result inline beneath the
+    // collapsed row by default. Bash output is what the Coder/Reviewer is
+    // actually reasoning against — hiding it behind a click means the user
+    // has to expand every command to see what happened, which kills the
+    // "watch the team work" experience. fs_write is the agent making real
+    // changes to the codebase; showing what was written keeps that visible.
+    // Other tools (fs_read, fs_list, ToolSearch) keep the default-collapsed
+    // behavior since the input itself tells you what's happening.
+    const showResultInline =
+      block.result !== null &&
+      !block.result.isError &&
+      (block.name === "bash" ||
+        block.name === "fs_write" ||
+        block.name === "write_verification_script");
+    const inlineResultText = showResultInline
+      ? truncateLines(formatToolResult(block.result!.content), 10)
+      : null;
+
     return (
       // No outer border in collapsed state — the row is dense by design;
       // borders on every tool call would create visual stripes. The expand
@@ -777,6 +856,15 @@ function BlockView({
             <span className="text-[12px] text-red-400 shrink-0">error</span>
           )}
         </button>
+        {/* Inline result preview for bash / fs_write — shown without
+            requiring the user to expand. Truncated to ~10 lines so a long
+            test run doesn't overwhelm the panel. Click the row to see
+            the full input + result. */}
+        {!expanded && inlineResultText && (
+          <div className="ml-7 mt-0.5 mb-1">
+            <DiffOrText text={inlineResultText} compact />
+          </div>
+        )}
         {expanded && (
           <div className="px-3 pb-2 pt-1 space-y-1.5 border-l-2 border-line/40 ml-3">
             <div>
@@ -792,15 +880,13 @@ function BlockView({
                 <div className="text-[12px] uppercase tracking-wider text-gray-500">
                   Result {block.result.isError && "(error)"}
                 </div>
-                <pre
-                  className={`text-[13px] rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap ${
-                    block.result.isError
-                      ? "text-red-300 bg-red-950/30"
-                      : "text-gray-300 bg-black/40"
-                  }`}
-                >
-                  {formatToolResult(block.result.content)}
-                </pre>
+                {block.result.isError ? (
+                  <pre className="text-[13px] rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap text-red-300 bg-red-950/30">
+                    {formatToolResult(block.result.content)}
+                  </pre>
+                ) : (
+                  <DiffOrText text={formatToolResult(block.result.content)} />
+                )}
               </div>
             )}
             {!block.result && (
@@ -858,6 +944,82 @@ function formatToolResult(content: unknown): string {
       .join("\n");
   }
   return JSON.stringify(content, null, 2);
+}
+
+// Limit a multi-line string to the first N lines for inline previews,
+// adding a "… (X more lines)" tail when truncated. Used for bash output
+// and fs_write results so a long test run doesn't dominate the panel.
+function truncateLines(text: string, maxLines: number): string {
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  return (
+    lines.slice(0, maxLines).join("\n") +
+    `\n… (${lines.length - maxLines} more lines — click to expand)`
+  );
+}
+
+// Render text as either a colored unified diff (when it has the marker
+// pattern of one) or a plain pre block. The fs_write tool emits unified
+// diffs in its result body when overwriting a file; this component picks
+// up the format and applies green/red coloring per line so the user can
+// read changes the way they would in `git diff` or Claude Code's terminal.
+//
+// Detection is heuristic: a `--- a/...` or `+++ b/...` header anywhere
+// in the text, OR an `@@ ... @@` hunk header. False positives are
+// possible (text containing those substrings) but harmless — diff
+// rendering still reads correctly for non-diff content.
+function DiffOrText({
+  text,
+  compact = false,
+}: {
+  text: string;
+  compact?: boolean;
+}) {
+  const looksLikeDiff =
+    /^---\s/m.test(text) || /^\+\+\+\s/m.test(text) || /^@@\s.*@@/m.test(text);
+
+  const baseClasses = compact
+    ? "text-[13px] bg-black/30 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap"
+    : "text-[13px] bg-black/40 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap";
+
+  if (!looksLikeDiff) {
+    return (
+      <pre
+        className={`${baseClasses} text-gray-300`}
+        style={{ overflowWrap: "anywhere" }}
+      >
+        {text}
+      </pre>
+    );
+  }
+
+  // Render diff line-by-line with classification. Headers (---, +++, @@)
+  // get muted neutral; +lines green; -lines red; context lines gray.
+  const lines = text.split("\n");
+  return (
+    <pre
+      className={`${baseClasses} leading-snug`}
+      style={{ overflowWrap: "anywhere" }}
+    >
+      {lines.map((line, i) => {
+        let className = "text-gray-400";
+        if (line.startsWith("+++") || line.startsWith("---")) {
+          className = "text-gray-500";
+        } else if (line.startsWith("@@")) {
+          className = "text-cyan-400";
+        } else if (line.startsWith("+")) {
+          className = "text-emerald-300 bg-emerald-950/30";
+        } else if (line.startsWith("-")) {
+          className = "text-red-300 bg-red-950/30";
+        }
+        return (
+          <span key={i} className={`block ${className}`}>
+            {line || " "}
+          </span>
+        );
+      })}
+    </pre>
+  );
 }
 
 function summarizeStatusPayload(

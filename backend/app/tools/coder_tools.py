@@ -252,6 +252,22 @@ def build_coder_tools(
                 content=f"'content' must be a string, got {type(content).__name__}",
                 is_error=True,
             )
+        # Capture the file's prior content (if any) BEFORE the write so we
+        # can emit a unified diff in the result. Surfacing diffs in the
+        # agents panel makes file edits visible the way Claude Code's
+        # terminal shows them — you can see what changed without opening
+        # the file in an editor. Failures here are non-fatal; we just
+        # skip the diff and write normally.
+        old_content: str | None = None
+        try:
+            from ..sandbox.fs import safe_path
+
+            existing = safe_path(sandbox.project_root, path)
+            if existing.is_file():
+                old_content = existing.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            old_content = None
+
         try:
             resolved = safe_write(sandbox.project_root, path, content)
         except PathOutsideProject as exc:
@@ -274,7 +290,39 @@ def build_coder_tools(
                 "bytes": len(content.encode("utf-8")),
             }
         )
-        return ToolResult(content=f"Wrote {len(content)} chars to {rel_str}")
+
+        # Build the result body. For new files we just say "Created N chars".
+        # For overwrites we include a unified diff (capped at 200 lines so
+        # the event payload stays bounded — a Coder rewriting 2000-line files
+        # shouldn't flood the WebSocket). The agents panel picks the diff out
+        # of the result text via its "+++ /a" / "--- /b" markers and renders
+        # with green/red coloring.
+        if old_content is None:
+            body = f"Created {rel_str} ({len(content)} chars, {content.count(chr(10)) + 1} lines)"
+        elif old_content == content:
+            body = f"Wrote {rel_str} (no changes — content identical to existing file)"
+        else:
+            import difflib
+
+            diff_lines = list(
+                difflib.unified_diff(
+                    old_content.splitlines(keepends=True),
+                    content.splitlines(keepends=True),
+                    fromfile=f"a/{rel_str}",
+                    tofile=f"b/{rel_str}",
+                    n=3,  # 3 lines of context — standard for unified diffs
+                )
+            )
+            # Cap diff size — beyond ~200 lines the agent panel can't show
+            # it usefully anyway, and the WebSocket payload starts to matter.
+            if len(diff_lines) > 200:
+                diff_lines = diff_lines[:200] + [
+                    f"... (diff truncated, {len(diff_lines) - 200} more lines) ...\n"
+                ]
+            diff_text = "".join(diff_lines)
+            body = f"Wrote {rel_str} ({len(content)} chars)\n\n{diff_text}"
+
+        return ToolResult(content=body)
 
     # ---- Bash -----------------------------------------------------------------
 

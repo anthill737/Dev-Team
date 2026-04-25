@@ -311,6 +311,7 @@ class ClaudeCodeRunner:
             ResultMessage,
             SystemMessage,
             TextBlock as SDKTextBlock,
+            ThinkingBlock as SDKThinkingBlock,
             ToolResultBlock as SDKToolResultBlock,
             ToolUseBlock as SDKToolUseBlock,
             UserMessage,
@@ -400,10 +401,24 @@ class ClaudeCodeRunner:
                         )
                         continue
 
-                    # AssistantMessage: the meat. Contains text, tool_use blocks.
+                    # AssistantMessage: the meat. Contains text, thinking,
+                    # tool_use blocks. Each block type maps to its own
+                    # StreamEvent kind so the inspector can render them
+                    # distinctly (thinking → italic dim, text → normal,
+                    # tool_use → tool card).
                     if isinstance(msg, AssistantMessage):
                         for block in msg.content:
-                            if isinstance(block, SDKTextBlock):
+                            if isinstance(block, SDKThinkingBlock):
+                                # Thinking is the model's private reasoning
+                                # before the user-facing response. Surfacing
+                                # it makes the agent's behavior legible: you
+                                # see WHY the Coder decided to read main.ts,
+                                # not just THAT it did.
+                                yield StreamEvent(
+                                    kind="thinking_delta",
+                                    payload={"text": block.thinking},
+                                )
+                            elif isinstance(block, SDKTextBlock):
                                 yield StreamEvent(
                                     kind="text_delta",
                                     payload={"text": block.text},
