@@ -45,17 +45,19 @@ export function ArchitectChat({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-line flex items-baseline justify-between">
-        <div>
-          <h2 className="text-[17px] font-semibold">Architect</h2>
-          <p className="text-[15px] text-gray-500">Senior engineer, interviewing you</p>
-        </div>
-        {(tokensThisTurn.input > 0 || tokensThisTurn.output > 0) && (
-          <div className="text-[15px] text-gray-500 font-mono">
+      {(tokensThisTurn.input > 0 || tokensThisTurn.output > 0) && (
+        // Token counter only — when there's nothing to count, we render no
+        // header at all so the column is just chat. The previous header
+        // ("Architect / Senior engineer, interviewing you") was misleading
+        // once execution started: the Architect is on standby for most of
+        // the project's lifecycle, and the status bar already names the
+        // active agent. Removed to free vertical space for chat content.
+        <div className="px-4 py-2 border-b border-line flex items-baseline justify-end">
+          <div className="text-[13px] text-gray-500 font-mono">
             {tokensThisTurn.input.toLocaleString()}↓ {tokensThisTurn.output.toLocaleString()}↑
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {interview.length === 0 && !streaming && (
