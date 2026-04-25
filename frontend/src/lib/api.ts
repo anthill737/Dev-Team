@@ -62,6 +62,13 @@ export interface CreateProjectArgs {
   default_task_token_budget?: number;
   max_task_iterations?: number;
   max_wall_clock_seconds?: number | null;
+  // Per-agent model overrides. Omit any to use the global default. Send the
+  // sentinel "default" to explicitly clear an existing override (mainly used
+  // by the update endpoint, but harmless on create — same effect as omit).
+  model_architect?: string;
+  model_dispatcher?: string;
+  model_coder?: string;
+  model_reviewer?: string;
 }
 
 export async function createProject(args: CreateProjectArgs): Promise<ProjectDetail> {
@@ -139,6 +146,19 @@ export async function addWork(id: string): Promise<ProjectDetail> {
 // project isn't in INTERVIEW or plan.md is effectively empty.
 export async function forceSubmitPlan(id: string): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/api/projects/${id}/force_submit_plan`, {
+    method: "POST",
+  });
+}
+
+// Rescue projects that hit the multi-phase auto-advance bug: the project is
+// marked COMPLETE but plan.md has phases that were never decomposed. This
+// finds the first undone phase in plan.md, sets it as current_phase, and
+// flips status to DISPATCHING. The existing pipeline then takes over from
+// there. Backend refuses if all phases are already done, the project is
+// currently running, or tasks.json already has tasks for the phase to
+// resume (partial-dispatch conflict the user should investigate manually).
+export async function resumePhases(id: string): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/api/projects/${id}/resume_phases`, {
     method: "POST",
   });
 }
@@ -252,6 +272,31 @@ export interface ProjectUpdateArgs {
   max_wall_clock_seconds?: number;
   clear_max_wall_clock?: boolean;
   user_platform?: "windows" | "macos" | "linux";
+  // Per-agent model overrides. Send a model string to set; send the sentinel
+  // "default" to clear an existing override and revert to global default;
+  // omit the field entirely to leave it unchanged.
+  model_architect?: string;
+  model_dispatcher?: string;
+  model_coder?: string;
+  model_reviewer?: string;
+}
+
+// Catalog of available models + current global defaults per role. Frontend
+// fetches this once on app load and uses it to populate the model-picker
+// dropdowns. Avoids hardcoding the list and keeps it in sync with backend.
+export interface ModelChoice {
+  string: string;
+  label: string;
+  cost_hint: string;
+}
+
+export interface ModelCatalog {
+  choices: ModelChoice[];
+  defaults: { architect: string; dispatcher: string; coder: string; reviewer: string };
+}
+
+export async function getModelCatalog(): Promise<ModelCatalog> {
+  return request<ModelCatalog>("/api/projects/models/catalog");
 }
 
 export async function updateProject(

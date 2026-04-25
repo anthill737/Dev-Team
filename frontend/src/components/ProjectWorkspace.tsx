@@ -335,6 +335,36 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
     }
   };
 
+  // Resume phases — for projects stuck at COMPLETE with unresolved phases in
+  // plan.md (the multi-phase auto-advance bug). Confirm before kicking off
+  // because the project will start running the Dispatcher again.
+  const [resumingPhases, setResumingPhases] = useState(false);
+  const handleResumePhases = async () => {
+    const phases = project?.unresolved_phase_ids ?? [];
+    const ok = window.confirm(
+      `Resume work on ${phases.length} unfinished phase(s): ${phases.join(", ")}?\n\n` +
+      "The Dispatcher will decompose the next undone phase into tasks, then the " +
+      "execution loop will run them. Auto-advance to subsequent phases is now " +
+      "fixed, so all remaining phases should run through to completion.\n\n" +
+      "Use this for projects that completed before the multi-phase fix shipped — " +
+      "they were marked done but P2/P3/etc. never actually ran."
+    );
+    if (!ok) return;
+    setResumingPhases(true);
+    try {
+      const { resumePhases } = await import("../lib/api");
+      await resumePhases(projectId);
+      await refreshProjectData();
+    } catch (e) {
+      // 409 conflicts (project running, or pre-existing tasks for the phase)
+      // include actionable detail in the message — show it verbatim so the
+      // user knows what to investigate.
+      alert(`Could not resume phases: ${(e as Error).message}`);
+    } finally {
+      setResumingPhases(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between px-4 py-2 border-b border-line bg-panel/50">
@@ -437,6 +467,8 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         onOpenSettings={() => setShowSettings(true)}
         onForceSubmitPlan={handleForceSubmitPlan}
         forceSubmittingPlan={forceSubmittingPlan}
+        onResumePhases={handleResumePhases}
+        resumingPhases={resumingPhases}
         onOpenIn={async (target) => {
           try {
             await openProjectIn(projectId, target);

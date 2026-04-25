@@ -289,7 +289,7 @@ export function AgentInspector({ projectId, pollIntervalMs = 1500 }: Props) {
       <div
         ref={transcriptRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-2 text-[15px] font-mono"
+        className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-3 py-2 text-[15px] font-mono"
       >
         {visibleEvents.length === 0 ? (
           <div className="text-gray-500 text-[15px] italic">
@@ -463,7 +463,13 @@ function BlockView({
 
   if (block.kind === "text") {
     return (
-      <div className="text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
+      // break-words handles the common case; overflow-wrap-anywhere catches
+      // truly unbreakable tokens (long URLs, snake_case identifiers, paths).
+      // min-w-0 lets flex/grid parents constrain width despite child content.
+      <div
+        className="text-gray-200 whitespace-pre-wrap break-words leading-relaxed min-w-0"
+        style={{ overflowWrap: "anywhere" }}
+      >
         {showAgentBadge && <AgentBadge agent={block.agent} />}
         {block.text}
       </div>

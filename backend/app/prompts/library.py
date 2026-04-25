@@ -87,6 +87,17 @@ completion signal for every task, so this decision cannot be left implicit.
 acceptance criteria for the phase as a bulleted list — concrete observable conditions \
 that define "this phase is done." The Dispatcher will read these and decompose them into \
 tasks, so vagueness here compounds downstream.
+
+    THE FINAL PHASE'S ACCEPTANCE CRITERIA MUST INCLUDE THIS LITERAL CRITERION:
+      "A `RUN.md` file exists in the project root with copy-paste instructions for \
+the user's platform showing: (1) any prerequisites or dependencies to install, (2) the \
+exact install commands, (3) any configuration steps (env vars, config files), (4) the \
+exact command to launch the project, and (5) how to verify it's running correctly. \
+Commands must use the platform-appropriate shell syntax for {user_platform}."
+    The user's platform is `{user_platform}` and you should reference that explicitly \
+in this acceptance criterion so the Coder writes platform-correct commands. Without \
+this, projects ship done but the user has no idea how to actually run what was built — \
+this has happened, and it's a critical UX failure.
   - Non-goals (explicit — what this project is NOT)
   - Known risks and open questions
 
@@ -569,17 +580,27 @@ def _platform_hints_short(platform: str) -> str:
     }.get(platform, _HINTS_SHORT_LINUX)
 
 
-def architect_prompt(*, incremental: bool = False) -> str:
+def architect_prompt(*, incremental: bool = False, user_platform: str = "linux") -> str:
     """System prompt for the Architect.
 
     incremental=True prepends the add-work preamble — used when the user has
     reopened a completed project to add more work. The preamble tells the
     Architect to read the existing plan and only interview about the incremental
     work, appending a new phase rather than rewriting the plan.
+
+    user_platform is substituted into the prompt body where the Architect is
+    instructed to require platform-appropriate run commands in the final
+    phase's RUN.md acceptance criterion. Defaults to "linux" so callers
+    without context still get a coherent prompt (the substituted value just
+    won't match the real user's OS until upgraded).
     """
     body = _ARCHITECT_BODY
     if incremental:
         body = _ARCHITECT_ADD_WORK_PREAMBLE + body
+    # Substitute the platform marker. Done after assembly choice so the
+    # incremental preamble can also reference {user_platform} if we later add
+    # a need for it.
+    body = body.replace("{user_platform}", user_platform)
     return _assemble(body)
 
 

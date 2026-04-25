@@ -98,10 +98,28 @@ class ExecutionLoop:
                 self.store.write_meta(meta)
 
             tasks = self.store.read_tasks()
+            # Read plan.md's phase list so the scheduler can tell "all tasks
+            # done because the project is finished" (PROJECT_COMPLETE) from
+            # "all tasks done because the Dispatcher only decomposed the
+            # current phase and more phases exist in the plan" (PHASE_COMPLETE
+            # → auto-advance fires). Cheap to recompute each iteration; plan.md
+            # rarely changes during execution.
+            phase_ids: list[str] = []
+            try:
+                from .phases import parse_phases as _parse_phases
+
+                plan_text = self.store.read_plan()
+                phase_ids = [p.id for p in _parse_phases(plan_text)]
+            except Exception:  # noqa: BLE001
+                # Fall back to None — scheduler reverts to old single-phase
+                # behavior (treats all-tasks-done as PROJECT_COMPLETE).
+                phase_ids = []
+
             decision = choose_next_action(
                 tasks,
                 current_phase=meta.current_phase,
                 max_iterations=meta.max_task_iterations,
+                remaining_phase_ids=phase_ids if phase_ids else None,
             )
 
             yield _event(
