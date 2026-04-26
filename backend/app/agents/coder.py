@@ -190,13 +190,20 @@ class Coder:
         signaled: dict[str, TaskOutcome | None],
     ) -> AsyncIterator[StreamEvent]:
         """The actual APIRunner stream, pass-through with early exit when outcome signaled."""
-        # Read platform fresh from disk each run so a mid-project platform
-        # override (user edits via PATCH) takes effect on the next iteration.
-        user_platform = ctx.store.read_meta().user_platform
+        # Read platform + playwright_enabled fresh from disk each run so a
+        # mid-project toggle (user edits via PATCH) takes effect on the next
+        # iteration. playwright_enabled changes whether the Coder routes UI
+        # tasks to needs_user_review (off) or approved (on, Reviewer verifies).
+        meta = ctx.store.read_meta()
+        user_platform = meta.user_platform
+        playwright_enabled = bool(meta.playwright_enabled)
         async for ev in self._runner.stream(
             role="coder",
             model=self._model,
-            system_prompt=coder_prompt(user_platform=user_platform),
+            system_prompt=coder_prompt(
+                user_platform=user_platform,
+                playwright_enabled=playwright_enabled,
+            ),
             messages=messages,
             tools=tools,
             # 32k so the Coder can write a substantial file in one fs_write call

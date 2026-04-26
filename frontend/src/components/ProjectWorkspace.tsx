@@ -447,6 +447,14 @@ export function ProjectWorkspace({ projectId, onBack }: Props) {
         agentCurrentActivity={
           execution.status === "running" && execution.currentTask
             ? `${execution.currentTask.task_id}${
+                // Iteration count surfaced inline so the user can see at a
+                // glance whether the Coder is making progress or stuck. Cap
+                // info comes from project.max_task_iterations so the format
+                // is "iter 3/8" — meaningful without checking the Tasks tab.
+                execution.currentTask.iteration && project?.max_task_iterations
+                  ? ` · iter ${execution.currentTask.iteration}/${project.max_task_iterations}`
+                  : ""
+              }${
                 execution.currentActivity ? ` · ${execution.currentActivity}` : ""
               }`
             : dispatcher.status === "running" && dispatcher.toolActivity.length > 0

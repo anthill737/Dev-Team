@@ -209,3 +209,33 @@ def test_reviewer_prompt_default_is_disabled() -> None:
     'disabled' branch, which is also the safe default."""
     p = reviewer_prompt(user_platform="linux")
     assert "Playwright is DISABLED" in p
+
+
+def test_coder_prompt_routes_visual_tasks_to_reviewer_when_playwright_on() -> None:
+    """The actual fix for 'Reviewer never runs'. With Playwright off, the
+    Coder is told to route visual tasks to needs_user_review (which bypasses
+    the Reviewer entirely). With Playwright on, the Coder should default to
+    approved on visual tasks too — Reviewer can verify them via
+    playwright_check. This test pins that contract.
+
+    Without this guard, a future prompt edit could revert to "always escalate
+    UI to user" and the Reviewer would silently never run on visual projects.
+    """
+    from app.prompts.library import coder_prompt
+
+    on = coder_prompt(user_platform="linux", playwright_enabled=True)
+    off = coder_prompt(user_platform="linux", playwright_enabled=False)
+
+    # Playwright on: Coder is told the Reviewer can verify visuals
+    assert "playwright_check" in on
+    assert "Default to approved for browser-rendered work" in on
+
+    # Playwright off: Coder must escalate visuals to the user
+    assert "MUST be needs_user_review" in off
+    # And shouldn't be confused by Playwright references it can't use
+    assert "playwright_check" not in off
+
+    # The "green tests, black screen" warning should be preserved in the
+    # off-branch as the rationale for escalation. (In on-branch, the
+    # Reviewer's prompt carries this warning instead.)
+    assert "green tests" in off or "black screen" in off

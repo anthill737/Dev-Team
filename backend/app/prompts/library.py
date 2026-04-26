@@ -314,29 +314,7 @@ with `rework_notes`.
 - If the task as specified cannot be completed (plan is wrong, requirements contradict) \
 → status='blocked' with `block_reason`.
 
-- status='needs_user_review' — required when verification needs a HUMAN to LOOK \
-at a rendered browser, GUI, or game and confirm it actually works visually. The Reviewer \
-can run shell commands, hit HTTP endpoints, parse output, and check files — but the \
-Reviewer CANNOT open a browser and see what's on screen. So any task whose acceptance \
-criteria depend on "the page renders," "the game runs," "the canvas displays X," "the \
-component appears correctly," or "the UI behaves visually" → MUST be needs_user_review. \
-Tests passing on the JS layer doesn't prove the rendered output works; a Three.js scene \
-can have green tests and ship a black screen, a React component can mount cleanly and \
-display nothing, a CSS layout can compile and look broken. Don't let "tests pass" lull \
-you into approving render-dependent work.
-
-Use needs_user_review for: any task involving a browser-rendered page or component, \
-canvas/WebGL output, game UIs, desktop GUIs, CSS/layout work where appearance matters, \
-PDF generation that should be visually inspected, image generation, anything where the \
-acceptance criterion is essentially "open it and see if it looks right."
-
-Use approved for: backend logic, APIs, data processing, file I/O, pure functions, CLI \
-tools, infrastructure, anything verifiable by running a command and checking the output. \
-The Reviewer is the safety net for these — you don't need to escalate to the user.
-
-When picking needs_user_review, provide `summary`, `review_checklist` (specific steps the \
-user should take — "run the app, click Start, verify the cockpit appears with the HUD"), \
-and `review_run_command` (exact copy-paste command to launch the thing they need to see).
+{VISUAL_OUTCOME_GUIDANCE}
 
 PLATFORM-AWARE SYNTAX FOR USER-FACING COMMANDS
 
@@ -618,15 +596,87 @@ def dispatcher_prompt() -> str:
     return _DISPATCHER_BODY
 
 
-def coder_prompt(user_platform: str = "linux") -> str:
+def coder_prompt(
+    user_platform: str = "linux",
+    playwright_enabled: bool = False,
+) -> str:
     """Build the Coder prompt with platform-specific command-syntax guidance.
 
     `user_platform` comes from ProjectMeta.user_platform — set at project
     creation time from the backend host, backfilled for old projects on access.
     Defaults to 'linux' if somehow unset so callers without the context still
     get a sensible prompt.
+
+    `playwright_enabled` switches the guidance for visual/UI tasks. When True,
+    the Reviewer has playwright_check available and can verify rendered output
+    itself — the Coder defaults to approved on UI tasks like any other. When
+    False, the Coder must escalate visual-verification tasks to the user via
+    needs_user_review, since the Reviewer cannot see a rendered page.
     """
-    body = _CODER_BODY.replace("{PLATFORM_HINTS}", _platform_hints_long(user_platform))
+    if playwright_enabled:
+        # Playwright is on. The Reviewer can actually verify rendered output.
+        # The Coder should treat UI tasks like any other — default to approved,
+        # let the Reviewer be the verifier. needs_user_review is reserved for
+        # things that even Playwright can't verify (audio, multi-step user
+        # interaction patterns, judgment calls about "does this feel good").
+        visual_block = (
+            "- status='needs_user_review' — reserved for things even a "
+            "headless browser can't verify: audio quality, complex multi-step "
+            "interactions that require human judgment, \"does this feel "
+            "good\" calls. Do NOT use it for ordinary visual tasks — the "
+            "Reviewer has a playwright_check tool and can load the page in "
+            "a real browser, capture console errors, inspect DOM, and verify "
+            "that what you built actually renders. Default to approved for "
+            "browser-rendered work and let the Reviewer verify it.\n\n"
+            "Use approved for: backend logic, APIs, data processing, file I/O, "
+            "CLI tools, AND browser-rendered pages, components, canvas/WebGL "
+            "output, game UIs, CSS/layout. The Reviewer verifies all of these "
+            "— including visual correctness via Playwright. You don't need to "
+            "escalate render-dependent work to the user.\n\n"
+            "When you DO pick needs_user_review (rare — audio, judgment calls), "
+            "provide `summary`, `review_checklist`, and `review_run_command`."
+        )
+    else:
+        # Legacy behavior: Reviewer can't see, so the Coder must hand off
+        # visual-verification tasks to the user.
+        visual_block = (
+            "- status='needs_user_review' — required when verification needs "
+            "a HUMAN to LOOK at a rendered browser, GUI, or game and confirm "
+            "it actually works visually. The Reviewer can run shell commands, "
+            "hit HTTP endpoints, parse output, and check files — but the "
+            "Reviewer CANNOT open a browser and see what's on screen. So any "
+            "task whose acceptance criteria depend on \"the page renders,\" "
+            "\"the game runs,\" \"the canvas displays X,\" \"the component "
+            "appears correctly,\" or \"the UI behaves visually\" → MUST be "
+            "needs_user_review. Tests passing on the JS layer doesn't prove "
+            "the rendered output works; a Three.js scene can have green tests "
+            "and ship a black screen, a React component can mount cleanly "
+            "and display nothing, a CSS layout can compile and look broken. "
+            "Don't let \"tests pass\" lull you into approving render-"
+            "dependent work.\n\n"
+            "Use needs_user_review for: any task involving a browser-rendered "
+            "page or component, canvas/WebGL output, game UIs, desktop GUIs, "
+            "CSS/layout work where appearance matters, PDF generation that "
+            "should be visually inspected, image generation, anything where "
+            "the acceptance criterion is essentially \"open it and see if it "
+            "looks right.\"\n\n"
+            "Use approved for: backend logic, APIs, data processing, file I/O, "
+            "pure functions, CLI tools, infrastructure, anything verifiable "
+            "by running a command and checking the output. The Reviewer is "
+            "the safety net for these — you don't need to escalate to the "
+            "user.\n\n"
+            "When picking needs_user_review, provide `summary`, "
+            "`review_checklist` (specific steps the user should take — \"run "
+            "the app, click Start, verify the cockpit appears with the "
+            "HUD\"), and `review_run_command` (exact copy-paste command to "
+            "launch the thing they need to see)."
+        )
+
+    body = _CODER_BODY.replace(
+        "{PLATFORM_HINTS}", _platform_hints_long(user_platform)
+    ).replace(
+        "{VISUAL_OUTCOME_GUIDANCE}", visual_block
+    )
     return _assemble(body)
 
 
