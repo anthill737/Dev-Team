@@ -59,12 +59,20 @@ def build_reviewer_tools(
     task: dict[str, Any],
     *,
     signal_receiver: Callable[[ReviewSignal], None],
+    playwright_enabled: bool = False,
 ) -> list[ToolSpec]:
     """Build the Reviewer's tool set for a single task review.
 
     `signal_receiver` is a callback submit_review invokes to deliver the verdict.
     The review agent loop ends when the signal is received, mirroring how the
     Coder's outcome_receiver works.
+
+    `playwright_enabled` controls whether the playwright_check tool is exposed
+    to the Reviewer. When False (default), only the standard read/bash tools
+    are available; the Reviewer's prompt also tells it Playwright is OFF so
+    it doesn't try to call a tool that isn't there. When True, Playwright is
+    available and the prompt instructs the Reviewer to use it for any task
+    with a browser-rendered artifact.
     """
 
     # ---- read_task ------------------------------------------------------------
@@ -330,9 +338,196 @@ def build_reviewer_tools(
             )
         )
 
+    # ---- playwright_check ----------------------------------------------------
+    #
+    # Browser-based runtime verification. Loads a URL (typically a local
+    # file:// or http://localhost:* served by the Coder's build) in a headless
+    # Chromium, optionally runs a small click/input script, and returns:
+    #   - the page title
+    #   - first 5 console error messages
+    #   - first 200 chars of body innerText (proof the DOM populated)
+    #   - any uncaught JS errors during the run
+    #
+    # Designed to catch the "green tests, black screen" failure mode: the
+    # build completes, unit tests pass, but the actual rendered page is
+    # broken. A real Reviewer running this gets ground-truth verification.
+    #
+    # Runs via subprocess (not in-process) so the parent process doesn't get
+    # stuck on Playwright's threading model. Spawns a dedicated Python script
+    # with a tight timeout. If Playwright isn't installed, returns an error
+    # the Reviewer reads and surfaces to the user.
+
+    async def playwright_check_exec(args: dict[str, Any]) -> ToolResult:
+        url = args.get("url")
+        wait_ms = args.get("wait_ms", 1500)
+        if not isinstance(url, str) or not url:
+            return ToolResult(
+                content="Missing 'url'. Provide a file:// or http:// URL.",
+                is_error=True,
+            )
+        if not isinstance(wait_ms, int) or wait_ms < 0 or wait_ms > 30000:
+            return ToolResult(
+                content="'wait_ms' must be an integer 0-30000.",
+                is_error=True,
+            )
+
+        # Launch a one-shot Python subprocess running the Playwright check.
+        # Subprocess isolates Playwright's asyncio loop from ours and lets
+        # us hard-kill on timeout.
+        import asyncio as _asyncio
+        import json as _json
+        import shutil as _shutil
+        import sys as _sys
+
+        script = f'''
+import asyncio, json, sys
+async def main():
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print(json.dumps({{
+            "error": "playwright_not_installed",
+            "hint": "Install on the host: pip install playwright && playwright install chromium"
+        }}))
+        return
+    console_errors = []
+    page_errors = []
+    async with async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True)
+        except Exception as e:
+            print(json.dumps({{"error": "browser_launch_failed", "detail": str(e)}}))
+            return
+        ctx = await browser.new_context()
+        page = await ctx.new_page()
+        page.on("console", lambda msg: console_errors.append(f"{{msg.type}}: {{msg.text}}") if msg.type == "error" else None)
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        try:
+            await page.goto({_json.dumps(url)}, wait_until="load", timeout=15000)
+        except Exception as e:
+            await browser.close()
+            print(json.dumps({{"error": "navigation_failed", "detail": str(e)}}))
+            return
+        await page.wait_for_timeout({wait_ms})
+        try:
+            title = await page.title()
+        except Exception:
+            title = ""
+        try:
+            body_text = (await page.inner_text("body"))[:200]
+        except Exception:
+            body_text = ""
+        await browser.close()
+        print(json.dumps({{
+            "title": title,
+            "body_excerpt": body_text,
+            "console_errors": console_errors[:5],
+            "page_errors": page_errors[:5],
+        }}))
+asyncio.run(main())
+'''
+
+        try:
+            proc = await _asyncio.create_subprocess_exec(
+                _sys.executable, "-c", script,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+                cwd=str(sandbox.project_root),
+            )
+            try:
+                stdout, stderr = await _asyncio.wait_for(
+                    proc.communicate(), timeout=45.0
+                )
+            except _asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return ToolResult(
+                    content=(
+                        "playwright_check timed out after 45s. The page may be "
+                        "stuck in an infinite loop, or the URL is unreachable. "
+                        "Try a smaller wait_ms or verify the URL is correct."
+                    ),
+                    is_error=True,
+                )
+
+            output = stdout.decode("utf-8", errors="replace").strip()
+            if not output:
+                err = stderr.decode("utf-8", errors="replace")[:500]
+                return ToolResult(
+                    content=f"playwright_check produced no output. Stderr: {err}",
+                    is_error=True,
+                )
+            try:
+                result = _json.loads(output.splitlines()[-1])
+            except _json.JSONDecodeError:
+                return ToolResult(
+                    content=f"playwright_check returned non-JSON output:\n{output[:500]}",
+                    is_error=True,
+                )
+
+            # Translate the structured result into a single readable text
+            # block — easier for the model to reason against than raw JSON.
+            if "error" in result:
+                if result["error"] == "playwright_not_installed":
+                    return ToolResult(
+                        content=(
+                            "Playwright is enabled for this project but not "
+                            "installed in the environment. Install it on the "
+                            "host machine with:\n\n"
+                            "    pip install playwright\n"
+                            "    playwright install chromium\n\n"
+                            "Then retry. Alternatively, the user can disable "
+                            "Playwright in project settings and you can fall "
+                            "back to node/curl smoke checks for Rule 3."
+                        ),
+                        is_error=True,
+                    )
+                return ToolResult(
+                    content=(
+                        f"playwright_check error: {result['error']}\n"
+                        f"Detail: {result.get('detail', '')}"
+                    ),
+                    is_error=True,
+                )
+
+            # Success path. Format observations.
+            lines = [
+                f"Loaded {url}",
+                f"  title: {result.get('title', '') or '(empty)'}",
+                f"  body excerpt: {result.get('body_excerpt', '') or '(empty)'}",
+            ]
+            console_errors = result.get("console_errors", [])
+            page_errors = result.get("page_errors", [])
+            if page_errors:
+                lines.append(f"  page errors ({len(page_errors)}):")
+                for e in page_errors:
+                    lines.append(f"    - {e[:200]}")
+            else:
+                lines.append("  page errors: none")
+            if console_errors:
+                lines.append(f"  console errors ({len(console_errors)}):")
+                for e in console_errors:
+                    lines.append(f"    - {e[:200]}")
+            else:
+                lines.append("  console errors: none")
+
+            # Treat ANY page error or console error as suspicious — surface
+            # it as a non-error tool result, but the Reviewer's rules say
+            # one defect = REJECT, so they should reject on this signal.
+            return ToolResult(content="\n".join(lines))
+
+        except FileNotFoundError:
+            return ToolResult(
+                content=(
+                    "Could not launch Python subprocess for playwright_check. "
+                    "This is a backend environment issue."
+                ),
+                is_error=True,
+            )
+
     # ---- tool specs -----------------------------------------------------------
 
-    return [
+    specs: list[ToolSpec] = [
         ToolSpec(
             name="read_task",
             description=(
@@ -482,3 +677,53 @@ def build_reviewer_tools(
             executor=submit_review_exec,
         ),
     ]
+
+    # Only register playwright_check when explicitly enabled. Keeping it out
+    # of the tool list when off ensures the model can't try to call a tool
+    # that won't work — and the prompt's "Step 0" tells the model whether
+    # the tool is available, mirroring the runtime state.
+    if playwright_enabled:
+        specs.append(
+            ToolSpec(
+                name="playwright_check",
+                description=(
+                    "Load a URL in a headless Chromium browser and report what "
+                    "actually rendered. Use this for ANY task with a browser-rendered "
+                    "artifact (Three.js scene, React UI, canvas game, plain HTML). "
+                    "This is the verification path Rule 3 requires when Playwright is "
+                    "ON for this project. Returns: page title, body text excerpt, "
+                    "console error messages, and uncaught JS errors. ANY console error "
+                    "or page error means the page is broken — apply Rule 1 and reject. "
+                    "An empty body_excerpt or empty title on a page that should display "
+                    "content is also a defect. URL can be file:// (e.g., the project's "
+                    "dist/index.html) or http://localhost:PORT (after the Coder starts "
+                    "a dev server). wait_ms is how long to let JS execute after load — "
+                    "1500ms is fine for static pages, bump to 3000-5000 for games or "
+                    "heavy SPAs that render asynchronously."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": (
+                                "URL to load. file:// for local files, http:// for "
+                                "running servers. Must be a string."
+                            ),
+                        },
+                        "wait_ms": {
+                            "type": "integer",
+                            "description": (
+                                "Milliseconds to wait after page load for JS to "
+                                "execute. Default 1500. Max 30000."
+                            ),
+                            "default": 1500,
+                        },
+                    },
+                    "required": ["url"],
+                },
+                executor=playwright_check_exec,
+            )
+        )
+
+    return specs

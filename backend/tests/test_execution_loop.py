@@ -916,3 +916,125 @@ def test_dispatcher_normalize_preserves_requires_review_and_cycles() -> None:
     assert norm2["requires_review"] is False
     assert norm2["review_cycles"] == 0
 
+
+
+# --- Agent tagging regression test --------------------------------------------------------
+#
+# Reproduces the user-reported bug: "all agent dialogue or whatever is showing
+# up under the Coder in the agents view." Verifies that text/tool events
+# emitted by the Reviewer phase get tagged with _agent="reviewer", not
+# inherited from the Coder phase that ran before them.
+
+
+class CoderRunnerWithText:
+    """Yields a text_delta and a tool_use_start before the task_outcome.
+
+    Mimics how the real Coder runs — it emits prose and tool calls before
+    signaling completion. The execution_loop must tag these with _agent="coder".
+    """
+
+    def __init__(self, outcome: TaskOutcome) -> None:
+        self._outcome = outcome
+
+    async def run(self, ctx: TaskContext) -> AsyncIterator[StreamEvent]:
+        yield StreamEvent(kind="text_delta", payload={"text": "Coder thinking..."})
+        yield StreamEvent(
+            kind="tool_use_start",
+            payload={"id": "t1", "name": "fs_read", "input": {"path": "main.ts"}},
+        )
+        yield StreamEvent(kind="task_outcome", payload={"outcome": self._outcome})
+
+
+class ReviewerWithText:
+    """Yields text + tool events from the Reviewer side. Mirrors how the
+    real Reviewer streams output during its review pass."""
+
+    def __init__(self, results: list) -> None:
+        self._results = list(results)
+        self.calls = 0
+
+    async def run(self, *, store, sandbox, task) -> AsyncIterator[StreamEvent]:
+        self.calls += 1
+        result = self._results.pop(0)
+        # These events arrive WITHOUT _agent set — the SDK doesn't know which
+        # role it's running as. The execution_loop is supposed to add the
+        # tag. If it doesn't, frontend mis-routes them to the Coder tab.
+        yield StreamEvent(kind="text_delta", payload={"text": "Reviewer reading..."})
+        yield StreamEvent(
+            kind="tool_use_start",
+            payload={"id": "r1", "name": "bash", "input": {"argv": ["pytest"]}},
+        )
+        yield StreamEvent(kind="review_outcome", payload={"result": result})
+
+
+def test_reviewer_events_are_tagged_as_reviewer_not_coder() -> None:
+    """Regression test for the bug where every agent's events showed up
+    under the Coder tab. Specifically: when the Coder finishes a task and
+    the Reviewer runs to verify it, the Reviewer's text_delta and
+    tool_use_start events must be tagged _agent="reviewer", not "coder".
+
+    The execution_loop has two distinct tagging spots:
+      - line ~358: tags Coder events with "coder"
+      - line ~418: tags Reviewer events with "reviewer"
+
+    If either is missing or wrong, this test fails.
+    """
+    from app.agents.reviewer import ReviewResult
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = setup_project(tmp, [make_task("P1-T1")])
+        sandbox = ProcessSandboxExecutor(tmp)
+        coder = CoderRunnerWithText(
+            TaskOutcome(kind=TaskOutcomeKind.APPROVED, summary="done")
+        )
+        reviewer = ReviewerWithText([ReviewResult(kind="approve", summary="ok")])
+        loop = ExecutionLoop(
+            store=store,
+            sandbox=sandbox,
+            runner=coder,
+            reviewer=reviewer,
+        )
+        events = collect_events(loop.run())
+
+        # Find the text_delta events. There should be exactly two — one from
+        # the Coder ("Coder thinking...") and one from the Reviewer
+        # ("Reviewer reading...").
+        text_events = [e for e in events if e.kind == "text_delta"]
+        assert len(text_events) == 2, (
+            f"Expected 2 text_deltas (one Coder, one Reviewer), got {len(text_events)}"
+        )
+
+        coder_text = next(
+            (e for e in text_events if "Coder" in e.payload.get("text", "")), None
+        )
+        reviewer_text = next(
+            (e for e in text_events if "Reviewer" in e.payload.get("text", "")),
+            None,
+        )
+        assert coder_text is not None and reviewer_text is not None
+
+        # Each text event must carry the right _agent tag for the inspector
+        # to route it to the right tab.
+        assert coder_text.payload.get("_agent") == "coder", (
+            f"Coder's text event was tagged _agent={coder_text.payload.get('_agent')!r} "
+            "instead of 'coder'"
+        )
+        assert reviewer_text.payload.get("_agent") == "reviewer", (
+            f"Reviewer's text event was tagged "
+            f"_agent={reviewer_text.payload.get('_agent')!r} instead of 'reviewer'. "
+            "This is the bug where everything shows up under the Coder tab."
+        )
+
+        # Same check for tool_use_start events
+        tool_events = [e for e in events if e.kind == "tool_use_start"]
+        assert len(tool_events) == 2
+
+        coder_tool = next(
+            (e for e in tool_events if e.payload.get("name") == "fs_read"), None
+        )
+        reviewer_tool = next(
+            (e for e in tool_events if e.payload.get("name") == "bash"), None
+        )
+        assert coder_tool is not None and reviewer_tool is not None
+        assert coder_tool.payload.get("_agent") == "coder"
+        assert reviewer_tool.payload.get("_agent") == "reviewer"

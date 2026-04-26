@@ -206,6 +206,11 @@ class CreateProjectRequest(BaseModel):
     model_dispatcher: str | None = None
     model_coder: str | None = None
     model_reviewer: str | None = None
+    # Browser-based runtime verification toggle. Off by default — enabling
+    # it requires a one-time Playwright + Chromium install (~150MB), so
+    # opting in is explicit. Mid-project toggling is supported via the
+    # update endpoint.
+    playwright_enabled: bool = False
 
 
 class ProjectSummary(BaseModel):
@@ -280,6 +285,10 @@ class ProjectDetail(BaseModel):
     # only when the project has unfinished plan phases. Helps rescue projects
     # that hit the multi-phase auto-advance bug fixed in scheduler.py.
     unresolved_phase_ids: list[str] = []
+    # Browser-based runtime verification toggle. Surfaced so the UI can show
+    # a status indicator and the EditProjectModal can toggle it. The Reviewer
+    # reads this from meta directly at the start of each review.
+    playwright_enabled: bool = False
 
 
 class PlanApprovalRequest(BaseModel):
@@ -331,6 +340,10 @@ class UpdateProjectRequest(BaseModel):
     model_dispatcher: str | None = None
     model_coder: str | None = None
     model_reviewer: str | None = None
+    # Toggle browser-based runtime verification. None = "leave as-is";
+    # True/False = explicit on/off. Independent of model overrides — user
+    # might enable Playwright on a project without changing any models.
+    playwright_enabled: bool | None = None
 
 
 class UpdateTaskRequest(BaseModel):
@@ -408,6 +421,9 @@ async def create_project(
     meta.user_platform = detect_host_platform()
     # Per-agent model overrides (None for any role the user didn't override).
     _apply_model_overrides_to_meta(meta, body)
+    # Playwright runtime-verification toggle. Defaults False so existing
+    # users opt-in explicitly.
+    meta.playwright_enabled = body.playwright_enabled
     store.write_meta(meta)
 
     # Register the project so we can list it later
@@ -596,6 +612,13 @@ async def update_project(
         _validate_model_override(getattr(body, f"model_{role}", None), role)
     _apply_model_overrides_to_meta(meta, body)
 
+    # --- playwright_enabled toggle ---
+    # None = "no change", True/False = explicit flip. Reviewer reads
+    # this fresh on every review, so the toggle takes effect on the
+    # next review cycle without any restart.
+    if body.playwright_enabled is not None:
+        meta.playwright_enabled = body.playwright_enabled
+
     store.write_meta(meta)
     if registry_dirty:
         _save_registry(registry)
@@ -617,6 +640,7 @@ async def update_project(
                     "model_dispatcher": body.model_dispatcher,
                     "model_coder": body.model_coder,
                     "model_reviewer": body.model_reviewer,
+                    "playwright_enabled": body.playwright_enabled,
                 }.items() if v is not None
             ],
         }
@@ -1486,6 +1510,7 @@ def _to_detail(store: ProjectStore) -> ProjectDetail:
         # may not exist on freshly-created projects, and a parse error here
         # shouldn't break the entire detail endpoint — fall through to empty.
         unresolved_phase_ids=_compute_unresolved_phase_ids(store, meta),
+        playwright_enabled=meta.playwright_enabled,
     )
 
 

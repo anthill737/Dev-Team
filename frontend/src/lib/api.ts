@@ -69,6 +69,9 @@ export interface CreateProjectArgs {
   model_dispatcher?: string;
   model_coder?: string;
   model_reviewer?: string;
+  // Browser-based runtime verification. Default false (off). When true, the
+  // Reviewer's Rule 3 verification path uses playwright_check.
+  playwright_enabled?: boolean;
 }
 
 export async function createProject(args: CreateProjectArgs): Promise<ProjectDetail> {
@@ -279,6 +282,10 @@ export interface ProjectUpdateArgs {
   model_dispatcher?: string;
   model_coder?: string;
   model_reviewer?: string;
+  // Browser-based runtime verification. Omit to leave unchanged; explicit
+  // true/false to flip. Backend persists this to meta and the Reviewer
+  // reads the new value on its next run.
+  playwright_enabled?: boolean;
 }
 
 // Catalog of available models + current global defaults per role. Frontend

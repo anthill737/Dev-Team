@@ -88,13 +88,34 @@ class Reviewer:
         def _receiver(sig: ReviewSignal) -> None:
             signal_slot["signal"] = sig
 
+        # Read meta once at the start of the review. We need playwright_enabled
+        # for tool registration and prompt rendering, and user_platform for the
+        # platform-specific prompt hints. Reading both at once keeps the
+        # snapshot consistent — if the user toggles playwright mid-review (rare
+        # but possible), this review uses the value at start-of-review.
+        meta = store.read_meta()
+        user_platform = meta.user_platform
+        playwright_enabled = bool(meta.playwright_enabled)
+
         tools = build_reviewer_tools(
             store=store,
             sandbox=sandbox,
             task=task,
             signal_receiver=_receiver,
+            playwright_enabled=playwright_enabled,
         )
 
+        # Initial-message framing — short, points the Reviewer at the task and
+        # restates the workflow. The system prompt has the heavy detail; this
+        # is just enough to anchor the first turn. When Playwright is on, we
+        # mention playwright_check explicitly so the Reviewer knows the tool
+        # is available without having to scan the system prompt for it.
+        playwright_line = (
+            "  5. For browser-rendered artifacts: call playwright_check on the "
+            "URL and verify the page actually renders without console errors.\n"
+            if playwright_enabled
+            else "  5. Where you can, actually exercise the behavior (run the command, curl the endpoint).\n"
+        )
         initial_text = (
             f"Task {task['id']} ('{task['title']}') has been marked done by the Coder "
             f"and flagged for your review. Verify it against the acceptance criteria.\n\n"
@@ -103,7 +124,7 @@ class Reviewer:
             f"  2. Read the Coder's code (fs_list, fs_read) — the new files AND their integration points.\n"
             f"  3. Read the tests — do they actually test the behavior, or are they mocks of the thing being tested?\n"
             f"  4. Run the tests yourself with bash (don't trust the Coder's claim they pass).\n"
-            f"  5. Where you can, actually exercise the behavior (run the command, curl the endpoint).\n"
+            f"{playwright_line}"
             f"  6. Call submit_review with your verdict.\n\n"
             f"Default posture: find a bug. Hard threshold: any confirmed shortfall = request_changes."
         )
@@ -117,14 +138,13 @@ class Reviewer:
         cache_creation_total = 0
 
         try:
-            # Read platform fresh each run so user overrides take effect immediately.
-            user_platform = store.read_meta().user_platform
             async for ev in _timeout_wrapped_stream(
                 self._stream_inner(
                     messages=messages,
                     tools=tools,
                     signal_slot=signal_slot,
                     user_platform=user_platform,
+                    playwright_enabled=playwright_enabled,
                 ),
                 timeout_seconds=self._wall_clock,
             ):
@@ -196,12 +216,16 @@ class Reviewer:
         tools: list,
         signal_slot: dict,
         user_platform: str,
+        playwright_enabled: bool = False,
     ) -> AsyncIterator[StreamEvent]:
         """Run the APIRunner stream; short-circuit once submit_review fires."""
         async for ev in self._runner.stream(
             role="reviewer",
             model=self._model,
-            system_prompt=reviewer_prompt(user_platform=user_platform),
+            system_prompt=reviewer_prompt(
+                user_platform=user_platform,
+                playwright_enabled=playwright_enabled,
+            ),
             messages=messages,
             tools=tools,
             max_tokens=16000,  # Reviews are mostly reading, not writing

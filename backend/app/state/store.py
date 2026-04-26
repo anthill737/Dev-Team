@@ -109,6 +109,17 @@ class ProjectMeta:
     model_coder: str | None = None
     model_reviewer: str | None = None
 
+    # Browser-based runtime verification toggle. When True, the Reviewer's
+    # Rule 3 verification (runtime checks for runnable artifacts) uses the
+    # playwright_check tool — actually opens the page in a headless Chromium
+    # and captures screenshot + console errors + DOM state. When False
+    # (default), Rule 3 falls back to lighter-weight node/curl checks.
+    #
+    # Off by default because Playwright requires a one-time ~150MB browser
+    # download on first use; opting in is explicit. User can toggle mid-
+    # project; the Reviewer reads this flag at the start of every review.
+    playwright_enabled: bool = False
+
 
 @dataclass
 class InboxMessage:
