@@ -88,6 +88,174 @@ def test_executor_denies_pip_custom_index() -> None:
             )
 
 
+# ---- Windows shells: narrow allowed shape ---------------------------------
+#
+# cmd and powershell are on the allowlist so the Reviewer can run .bat/.ps1
+# files on Windows projects. They are restricted by argv shape — only the
+# narrow "launch a project-relative script" form is permitted. These tests
+# pin both directions: allowed shapes pass validation; dangerous shapes
+# (inline commands, absolute paths, -Command, parent-traversal) are denied.
+#
+# Validation runs before subprocess.exec, so these tests are platform-
+# independent — they exercise CommandDenied logic, not actual shell behavior.
+
+
+def test_executor_allows_cmd_to_run_bat_file() -> None:
+    """The reason cmd is on the allowlist at all: Reviewer must run run.bat
+    to verify Windows projects."""
+    from app.sandbox.executor import _validate_windows_shell_args
+    # Validator should accept; we don't actually run the bat (no Windows here)
+    _validate_windows_shell_args(["cmd", "/c", "run.bat"])
+    _validate_windows_shell_args(["cmd.exe", "/c", "scripts\\build.bat"])
+    _validate_windows_shell_args(["cmd", "/c", "run.bat", "arg1", "arg2"])
+
+
+def test_executor_allows_powershell_to_run_ps1_file() -> None:
+    from app.sandbox.executor import _validate_windows_shell_args
+    _validate_windows_shell_args(["powershell", "-File", "run.ps1"])
+    _validate_windows_shell_args(
+        ["powershell.exe", "-NoProfile", "-File", "scripts/build.ps1"]
+    )
+    _validate_windows_shell_args(
+        ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", "build.ps1"]
+    )
+
+
+def test_executor_denies_cmd_inline_command() -> None:
+    """The dangerous form: cmd /c "<arbitrary command>". Without this guard,
+    `cmd /c "rm -rf C:\\"` would be allowed because cmd is on the list."""
+    from app.sandbox.executor import _validate_windows_shell_args
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["cmd", "/c", "echo hello"])
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["cmd", "/c", "del /q /s C:\\"])
+
+
+def test_executor_denies_powershell_inline_command() -> None:
+    """The PowerShell equivalent: -Command and -EncodedCommand are blocked
+    because they take arbitrary script as a string."""
+    from app.sandbox.executor import _validate_windows_shell_args
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["powershell", "-Command", "Get-Process"])
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(
+            ["powershell", "-EncodedCommand", "ZQBjAGgAbwAgAGgA"]
+        )
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["powershell.exe", "-c", "Remove-Item -Recurse"])
+
+
+def test_executor_denies_cmd_absolute_script_path() -> None:
+    """Absolute paths bypass project containment. Block them at validation."""
+    from app.sandbox.executor import _validate_windows_shell_args
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["cmd", "/c", "C:\\Windows\\System32\\evil.bat"])
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["cmd", "/c", "/etc/passwd"])
+
+
+def test_executor_denies_cmd_parent_traversal_in_script_path() -> None:
+    from app.sandbox.executor import _validate_windows_shell_args
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["cmd", "/c", "..\\..\\escape.bat"])
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["powershell", "-File", "../../escape.ps1"])
+
+
+def test_executor_denies_cmd_non_script_file() -> None:
+    """If it doesn't end in .bat/.cmd/.ps1, it's not a script — likely an
+    inline command being smuggled past the script-path check."""
+    from app.sandbox.executor import _validate_windows_shell_args
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["cmd", "/c", "run.exe"])
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["powershell", "-File", "script.txt"])
+
+
+def test_executor_denies_cmd_with_no_args() -> None:
+    """cmd or powershell with no script to run is just an interactive shell —
+    deny that explicitly."""
+    from app.sandbox.executor import _validate_windows_shell_args
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["cmd"])
+    with pytest.raises(CommandDenied):
+        _validate_windows_shell_args(["powershell"])
+
+
+def test_executor_denies_cmd_via_run_method() -> None:
+    """End-to-end: ProcessSandboxExecutor.run() rejects the dangerous shapes
+    too, not just the validator in isolation. Catches wiring regressions
+    where someone bypasses the validator call."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ex = ProcessSandboxExecutor(tmp)
+        with pytest.raises(CommandDenied):
+            asyncio.run(ex.run(["cmd", "/c", "echo dangerous"]))
+        with pytest.raises(CommandDenied):
+            asyncio.run(ex.run(["powershell", "-Command", "Get-Process"]))
+
+
+# ---- Playwright CLI: install-only allowance ---------------------------------
+#
+# `playwright` is on the allowlist so the Reviewer can bootstrap its own
+# Chromium when playwright_check returns 'playwright_not_installed'. Other
+# subcommands (codegen, test, show-trace) are blocked — they need a UI, can
+# hang indefinitely, or take arbitrary file paths.
+
+
+def test_executor_allows_playwright_install() -> None:
+    """The reason playwright is on the allowlist: Reviewer installs Chromium."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ex = ProcessSandboxExecutor(tmp)
+        # Validation should pass (we don't actually run; shutil.which may
+        # return None which the executor handles cleanly).
+        # We test by reaching past the CommandDenied gate.
+        try:
+            asyncio.run(ex.run(["playwright", "install"], timeout_seconds=1))
+        except CommandDenied:
+            pytest.fail("playwright install should not raise CommandDenied")
+        try:
+            asyncio.run(ex.run(["playwright", "install", "chromium"], timeout_seconds=1))
+        except CommandDenied:
+            pytest.fail("playwright install chromium should not raise CommandDenied")
+        try:
+            asyncio.run(ex.run(["playwright", "--version"], timeout_seconds=1))
+        except CommandDenied:
+            pytest.fail("playwright --version should not raise CommandDenied")
+
+
+def test_executor_denies_playwright_codegen() -> None:
+    """codegen opens a browser GUI and waits indefinitely — bad for sandbox."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ex = ProcessSandboxExecutor(tmp)
+        with pytest.raises(CommandDenied):
+            asyncio.run(ex.run(["playwright", "codegen", "https://example.com"]))
+
+
+def test_executor_denies_playwright_test() -> None:
+    """`playwright test` runs an arbitrary test config — not what we want
+    from a sandboxed agent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ex = ProcessSandboxExecutor(tmp)
+        with pytest.raises(CommandDenied):
+            asyncio.run(ex.run(["playwright", "test"]))
+
+
+def test_executor_denies_playwright_install_with_random_arg() -> None:
+    """`playwright install evil.tar.gz` shouldn't work — only browser names."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ex = ProcessSandboxExecutor(tmp)
+        with pytest.raises(CommandDenied):
+            asyncio.run(ex.run(["playwright", "install", "evil.tar.gz"]))
+
+
+def test_executor_denies_bare_playwright() -> None:
+    """`playwright` alone is interactive; require a subcommand."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ex = ProcessSandboxExecutor(tmp)
+        with pytest.raises(CommandDenied):
+            asyncio.run(ex.run(["playwright"]))
+
+
 # ---- Command executor: behavior --------------------------------------------
 
 
