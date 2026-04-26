@@ -73,6 +73,12 @@ DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset(
         "prettier",
         "vitest",
         "jest",
+        # Playwright CLI — needed for the Reviewer to bootstrap its own
+        # Chromium when playwright_check returns 'playwright_not_installed'.
+        # Subcommand restrictions in _PLAYWRIGHT_ALLOWED_SUBCOMMANDS prevent
+        # arbitrary use; only `playwright install` and `playwright --version`
+        # are allowed.
+        "playwright",
         # Git (network subcommands like push/pull/clone blocked at the arg level below)
         "git",
         # Read-only inspection — writes go through fs.safe_write, not shell commands
@@ -90,6 +96,17 @@ DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset(
         # because `mkdir foo/../../bar` still resolves relative to CWD)
         "mkdir",
         "touch",
+        # Windows shells — required for the Reviewer to actually execute .bat
+        # and .ps1 files on Windows projects (without them, run.bat can't be
+        # verified at runtime and Rule 3 silently degrades to "looks right").
+        # Argv-level guards in _validate_windows_shell_args restrict these to
+        # launching project-relative script files only — they CANNOT be used
+        # to run arbitrary inline commands like `cmd /c rm -rf`.
+        "cmd",
+        "cmd.exe",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
     }
 )
 
@@ -113,6 +130,152 @@ _GIT_BLOCKED_SUBCOMMANDS: frozenset[str] = frozenset(
 _PIP_BLOCKED_FLAGS: frozenset[str] = frozenset(
     {"--index-url", "--extra-index-url", "--trusted-host"}
 )
+
+# Within the playwright CLI, only `install` (with optional browser names like
+# `chromium`, `firefox`, `webkit`) and `--version` are allowed. `codegen`,
+# `test`, `show-trace`, etc. either need a UI, can hang the sandbox, or open
+# arbitrary URLs.
+_PLAYWRIGHT_ALLOWED_SUBCOMMANDS: frozenset[str] = frozenset(
+    {"install", "install-deps", "--version", "-V"}
+)
+_PLAYWRIGHT_ALLOWED_BROWSERS: frozenset[str] = frozenset(
+    {"chromium", "firefox", "webkit"}
+)
+
+
+# ---- Windows shell argv validation ---------------------------------------------------------------
+#
+# cmd.exe and powershell are on the allowlist so the Reviewer can run .bat/.ps1
+# files (essential for Windows project verification — Rule 3 needs runtime
+# checks). But their default capability is "run literally any command", which
+# is too much. We restrict them to a narrow shape: launch a project-local
+# script file by name. Inline commands (cmd /c "echo hi"; powershell -Command
+# "Get-Process") are blocked.
+#
+# Allowed shapes:
+#   cmd /c run.bat                             — relative .bat in CWD
+#   cmd.exe /c scripts\build.bat               — relative .bat in subdir
+#   cmd /c run.bat arg1 arg2                   — script + args
+#   powershell -File run.ps1                   — relative .ps1
+#   powershell.exe -ExecutionPolicy Bypass -File scripts/build.ps1  — common form
+#
+# Blocked:
+#   cmd /c "rm -rf C:\"                        — inline command
+#   powershell -Command "Get-Process"          — inline command
+#   cmd /c C:\Windows\System32\evil.bat        — absolute path
+#   cmd /c ../../escape.bat                    — path escape
+
+_CMD_LAUNCH_FLAGS: frozenset[str] = frozenset({"/c", "/C", "/k", "/K"})
+_POWERSHELL_FILE_FLAGS: frozenset[str] = frozenset({"-File", "-file", "-f"})
+_POWERSHELL_PASSTHROUGH_FLAGS: frozenset[str] = frozenset(
+    {
+        "-ExecutionPolicy",
+        "-executionpolicy",
+        "-NoProfile",
+        "-noprofile",
+        "-NonInteractive",
+        "-noninteractive",
+        "-NoLogo",
+        "-nologo",
+    }
+)
+_WINDOWS_SHELL_NAMES: frozenset[str] = frozenset(
+    {"cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh"}
+)
+
+
+def _validate_script_path(path_str: str, *, expected_exts: tuple[str, ...]) -> None:
+    """Reject anything that isn't a project-relative script path with the right
+    extension. Mirrors the discipline of fs.safe_path: no absolute paths, no
+    parent-traversal, no leading slash. The actual path-traversal containment
+    happens in the executor's CWD lock — this is just a fast-fail for obvious
+    misuse.
+    """
+    if not path_str:
+        raise CommandDenied("Empty script path")
+    if path_str.startswith("/") or path_str.startswith("\\"):
+        raise CommandDenied(f"Script path must be relative, not absolute: {path_str!r}")
+    # Windows absolute paths like "C:\..." or "C:/..."
+    if len(path_str) >= 2 and path_str[1] == ":":
+        raise CommandDenied(f"Script path must be relative, not absolute: {path_str!r}")
+    if ".." in path_str.replace("\\", "/").split("/"):
+        raise CommandDenied(f"Script path may not contain '..': {path_str!r}")
+    lower = path_str.lower()
+    if not any(lower.endswith(ext) for ext in expected_exts):
+        raise CommandDenied(
+            f"Script must end in one of {expected_exts}: got {path_str!r}"
+        )
+
+
+def _validate_windows_shell_args(argv: list[str]) -> None:
+    """Enforce the narrow allowed shape for cmd/powershell invocations.
+
+    Raises CommandDenied if argv tries to do anything other than launch a
+    project-relative .bat/.cmd/.ps1 file. See module-level comment for the
+    full list of allowed shapes.
+    """
+    cmd = argv[0].lower()
+    rest = argv[1:]
+    if not rest:
+        raise CommandDenied(
+            f"{cmd!r} requires args — must launch a script file. "
+            f"Allowed shapes: 'cmd /c <script.bat>' or 'powershell -File <script.ps1>'."
+        )
+
+    if cmd in {"cmd", "cmd.exe"}:
+        # Shape: cmd /c <script.bat> [args...]
+        flag = rest[0]
+        if flag not in _CMD_LAUNCH_FLAGS:
+            raise CommandDenied(
+                f"cmd first arg must be /c or /k, got {flag!r}. "
+                f"Inline commands like 'cmd /c \"echo ...\"' are blocked."
+            )
+        if len(rest) < 2:
+            raise CommandDenied("cmd /c requires a script path argument")
+        script = rest[1]
+        # Reject anything that looks like an inline command rather than a
+        # script file. The cheapest tell: does it have a script extension?
+        _validate_script_path(script, expected_exts=(".bat", ".cmd"))
+        return
+
+    if cmd in {"powershell", "powershell.exe", "pwsh"}:
+        # Shape: powershell [passthrough flags...] -File <script.ps1> [args...]
+        # Walk through args until we find -File; everything before must be a
+        # passthrough flag (-NoProfile, -ExecutionPolicy Bypass, etc.). After
+        # -File, the next token is the script path.
+        i = 0
+        while i < len(rest):
+            token = rest[i]
+            if token in _POWERSHELL_FILE_FLAGS:
+                if i + 1 >= len(rest):
+                    raise CommandDenied("powershell -File requires a script path")
+                script = rest[i + 1]
+                _validate_script_path(script, expected_exts=(".ps1",))
+                return
+            if token in _POWERSHELL_PASSTHROUGH_FLAGS:
+                # -ExecutionPolicy takes a value; -NoProfile etc. don't. Just
+                # consume an extra token if the next one isn't a flag — this
+                # is a heuristic but it works for the documented passthrough
+                # flags above.
+                i += 1
+                if (
+                    token in {"-ExecutionPolicy", "-executionpolicy"}
+                    and i < len(rest)
+                ):
+                    i += 1
+                continue
+            # Anything else (e.g. -Command, -EncodedCommand, a bare arg) is
+            # rejected — these are the dangerous inline-execution paths.
+            raise CommandDenied(
+                f"powershell arg {token!r} is not allowed. "
+                f"Only -File <script.ps1> with optional -NoProfile / "
+                f"-ExecutionPolicy / -NonInteractive / -NoLogo is permitted. "
+                f"Inline commands via -Command or -EncodedCommand are blocked."
+            )
+        raise CommandDenied(
+            "powershell invocation must include -File <script.ps1>. "
+            "Inline commands are blocked."
+        )
 
 
 # ---- Data types ----------------------------------------------------------------------------------
@@ -155,7 +318,10 @@ class SandboxExecutor(Protocol):
 # infinite loop printing to stdout).
 _MAX_STDOUT_BYTES = 50_000
 _MAX_STDERR_BYTES = 50_000
-_MAX_TIMEOUT_SECONDS = 300
+# 10 minutes — long enough for `playwright install chromium` (~150MB browser
+# download) on slow connections and `pip install` of large frameworks. Hard
+# kill at the cap so a wedged process can't run forever.
+_MAX_TIMEOUT_SECONDS = 600
 _MIN_TIMEOUT_SECONDS = 1
 
 
@@ -213,6 +379,41 @@ class ProcessSandboxExecutor:
                     raise CommandDenied(
                         f"pip flag {flag!r} is blocked (custom index URLs not allowed)"
                     )
+        # cmd/powershell are on the allowlist for running .bat/.ps1 files but
+        # restricted to that shape — no inline -Command or -c "..." execution.
+        if cmd in _WINDOWS_SHELL_NAMES:
+            _validate_windows_shell_args(argv)
+        # playwright CLI: only `install [browsers...]` or `--version`.
+        # `playwright codegen` opens a browser GUI; `playwright test` runs an
+        # arbitrary test config; neither is wanted from a sandboxed agent.
+        if cmd == "playwright":
+            if len(argv) < 2:
+                raise CommandDenied(
+                    "playwright requires a subcommand. Allowed: "
+                    "'playwright install [browser]' or 'playwright --version'."
+                )
+            sub = argv[1]
+            if sub not in _PLAYWRIGHT_ALLOWED_SUBCOMMANDS:
+                raise CommandDenied(
+                    f"playwright subcommand {sub!r} is blocked. "
+                    f"Allowed: install, install-deps, --version."
+                )
+            # If `install`, any further args must be browser names (or flags
+            # we explicitly allow). Block arbitrary positional args that
+            # might be paths or shell metacharacters.
+            if sub in ("install", "install-deps"):
+                for arg in argv[2:]:
+                    if arg.startswith("-"):
+                        # Allow common safe flags; reject everything else
+                        if arg not in ("--with-deps", "--dry-run", "--force"):
+                            raise CommandDenied(
+                                f"playwright install flag {arg!r} is blocked"
+                            )
+                    elif arg not in _PLAYWRIGHT_ALLOWED_BROWSERS:
+                        raise CommandDenied(
+                            f"playwright install argument {arg!r} is not a "
+                            f"recognized browser. Allowed: chromium, firefox, webkit."
+                        )
 
         # Resolve the executable on PATH. If not found, fail fast with a clean error
         # (otherwise we get a misleading FileNotFoundError from asyncio).

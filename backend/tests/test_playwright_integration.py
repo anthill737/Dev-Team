@@ -190,6 +190,20 @@ def test_reviewer_prompt_includes_step_zero_when_playwright_on() -> None:
     assert "RULE 1" in off
 
 
+def test_reviewer_prompt_tells_reviewer_to_self_install_playwright() -> None:
+    """When playwright_check returns 'not installed', the Reviewer should
+    install it via bash, not request_changes against the Coder. Pin the
+    self-install language so future prompt edits can't quietly regress
+    this and put us back to 'ask the user' behavior."""
+    on = reviewer_prompt(user_platform="linux", playwright_enabled=True)
+    # The prompt must explicitly tell the model how to install
+    assert "pip" in on and "install" in on and "playwright" in on
+    assert "chromium" in on
+    # And it must explicitly distance this from request_changes — a missing
+    # Playwright is a bootstrap step, not a Coder defect.
+    assert "bootstrap" in on.lower() or "not a code defect" in on.lower()
+
+
 def test_reviewer_prompt_default_is_disabled() -> None:
     """Backward compatibility: existing call sites without the flag get the
     'disabled' branch, which is also the safe default."""

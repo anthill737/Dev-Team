@@ -671,10 +671,14 @@ def reviewer_prompt(
             "URL, then read the result. Any console error, page error, empty "
             "body when the page should have content, or wrong title is a "
             "defect — apply Rule 1 and reject.\n\n"
-            "If playwright_check returns 'playwright_not_installed', that's "
-            "an environment issue, not a code defect — surface it in your "
-            "review (request_changes with a finding noting the env problem) "
-            "and the user will install Playwright before retrying.\n\n"
+            "If playwright_check returns 'playwright_not_installed', it is "
+            "YOUR job to install it before retrying — not the user's. Run:\n"
+            "  bash argv=['pip', 'install', 'playwright']\n"
+            "  bash argv=['playwright', 'install', 'chromium'], timeout_seconds=600\n"
+            "Then call playwright_check again. Only request_changes if the "
+            "install itself fails (network error, permission denied, etc.). "
+            "A missing Playwright is a one-time bootstrap, not a code defect "
+            "against the Coder's task — treat it that way.\n\n"
             "---\n\n"
         )
     else:

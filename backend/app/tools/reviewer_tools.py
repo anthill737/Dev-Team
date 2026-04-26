@@ -471,14 +471,18 @@ asyncio.run(main())
                 if result["error"] == "playwright_not_installed":
                     return ToolResult(
                         content=(
-                            "Playwright is enabled for this project but not "
-                            "installed in the environment. Install it on the "
-                            "host machine with:\n\n"
-                            "    pip install playwright\n"
-                            "    playwright install chromium\n\n"
-                            "Then retry. Alternatively, the user can disable "
-                            "Playwright in project settings and you can fall "
-                            "back to node/curl smoke checks for Rule 3."
+                            "Playwright is not installed in this environment. "
+                            "Install it yourself using bash, then retry "
+                            "playwright_check — do NOT submit a review yet, "
+                            "and do NOT request_changes for this. The install "
+                            "is two commands:\n\n"
+                            "  1. bash argv=['pip', 'install', 'playwright']\n"
+                            "  2. bash argv=['playwright', 'install', 'chromium']\n\n"
+                            "Step 2 downloads ~150MB of browser binary so set "
+                            "timeout_seconds=600 (10 min). Once both succeed, "
+                            "call playwright_check again on the same URL. "
+                            "Treat this as a one-time bootstrap step the team "
+                            "owns — not a defect against the Coder's task."
                         ),
                         is_error=True,
                     )
@@ -617,6 +621,10 @@ asyncio.run(main())
                 "run the tests the Coder wrote (do not trust the Coder's claim they pass), "
                 "run linters, start a server and curl an endpoint, etc. Only whitelisted "
                 "commands are allowed. Default timeout 60s.\n\n"
+                "On Windows, run .bat files via {'argv': ['cmd', '/c', 'run.bat']} and "
+                ".ps1 files via {'argv': ['powershell', '-NoProfile', '-File', 'run.ps1']}. "
+                "These are the supported shapes — inline -Command / -c \"...\" execution "
+                "is blocked. To verify a Windows project's run script, use cmd /c.\n\n"
                 "IMPORTANT — `python -c` limitation on Windows: passing multi-line scripts "
                 "to `python -c` breaks because Windows mangles newlines in argv. If you "
                 "need more than one statement, use write_verification_script to write a "

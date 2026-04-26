@@ -616,7 +616,11 @@ def build_coder_tools(
                 "argv as a list of strings. No pipes, redirects, command substitution, "
                 "or chaining. Example: {'argv': ['pytest', '-q', 'tests/test_foo.py']}. "
                 "Only whitelisted commands are allowed (python, node, npm, pytest, "
-                "vitest, git [read-only], ls, cat, grep, rg, etc.). Default timeout 60s."
+                "vitest, git [read-only], ls, cat, grep, rg, etc.). Default timeout 60s. "
+                "On Windows, .bat files run via {'argv': ['cmd', '/c', 'run.bat']} and "
+                ".ps1 files via {'argv': ['powershell', '-NoProfile', '-File', 'run.ps1']}; "
+                "inline -Command / -c \"...\" forms are blocked — only project-relative "
+                "script files."
             ),
             input_schema={
                 "type": "object",
