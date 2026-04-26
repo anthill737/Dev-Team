@@ -73,12 +73,22 @@ def build_coder_tools(
     task: dict[str, Any],
     *,
     outcome_receiver: Callable[[TaskOutcome], None],
+    playwright_enabled: bool = False,
 ) -> list[ToolSpec]:
     """Build the Coder's tool set for a single task run.
 
     `outcome_receiver` is a callback the signal_outcome tool calls when the Coder declares
     the task done. The agent's run loop watches this receiver — as soon as it's called,
     the Coder's turn ends.
+
+    `playwright_enabled` enables the runtime-level routing fix: when True,
+    signal_outcome with status='needs_user_review' is REJECTED for ordinary UI
+    tasks (form interactions, click flows, render verification). Reason: the
+    Reviewer has playwright_check and can verify these directly. Without this
+    runtime guard, the Coder talks itself into 'this needs human judgment' and
+    silently bypasses the Reviewer — exactly the failure mode the Playwright
+    feature was built to fix. See coder_prompt() for the matching prompt-level
+    guidance, but this enforcement is the part the Coder cannot argue with.
     """
 
     # ---- Task + plan context --------------------------------------------------
@@ -426,6 +436,46 @@ def build_coder_tools(
             )
             return ToolResult(content="Outcome recorded: NEEDS_REWORK. Stop working now.")
         if status == "needs_user_review":
+            # Runtime-level routing rule: when Playwright is enabled, the
+            # Reviewer can verify rendered output, form interactions, and
+            # click flows itself. needs_user_review is reserved for the
+            # narrow set of things even a headless browser can't verify
+            # — audio quality, subjective aesthetic judgments. Forms, click
+            # sequences, page renders, and "verify N things on a page" are
+            # all in scope for the Reviewer.
+            #
+            # This is enforced at the tool level (not just the prompt) because
+            # in practice the Coder talks itself into "this needs human
+            # judgment" for ordinary UI tasks. With the gate here, it can't.
+            # The model gets a concrete error and tries again with approved.
+            if playwright_enabled:
+                return ToolResult(
+                    content=(
+                        "needs_user_review is REJECTED for this project: "
+                        "Playwright is enabled and the Reviewer can verify "
+                        "browser-rendered output, form interactions, and "
+                        "click sequences directly via playwright_check.\n\n"
+                        "What to do instead:\n"
+                        "1. Re-call signal_outcome with status='approved'.\n"
+                        "2. In your `summary`, name the URL the Reviewer "
+                        "should load (e.g. 'http://localhost:5173/watchlist' "
+                        "or 'file:///<path>/dist/index.html') and the "
+                        "specific things to verify on it.\n"
+                        "3. If the task requires multi-step interaction "
+                        "(type X, click Y, expect Z), write a small Node "
+                        "or Python script under tests/ that drives the "
+                        "behavior end-to-end (hit the API directly, or use "
+                        "the same playwright lib the Reviewer has). Mention "
+                        "the script path in your summary so the Reviewer "
+                        "runs it.\n\n"
+                        "needs_user_review remains valid ONLY for: audio "
+                        "quality, subjective \"does this feel good\" calls. "
+                        "If your task is one of those rare cases, retry "
+                        "with the same status — but for ordinary UI work, "
+                        "use approved and let the Reviewer do its job."
+                    ),
+                    is_error=True,
+                )
             if not summary:
                 return ToolResult(
                     content=(
@@ -498,6 +548,67 @@ def build_coder_tools(
                 f"'needs_user_review', or 'blocked'."
             ),
             is_error=True,
+        )
+
+    # Build the signal_outcome description dynamically — when Playwright is
+    # on, we tell the Coder up front that needs_user_review is rejected for
+    # UI tasks. This matches the runtime gate in signal_outcome_exec, so the
+    # description and the gate agree (no surprise rejections at the end of
+    # a task). When Playwright is off, the legacy description applies and
+    # needs_user_review is the correct path for visual tasks.
+    if playwright_enabled:
+        signal_outcome_description = (
+            "End the task with an outcome. REQUIRED: call this exactly once "
+            "when you're done.\n\n"
+            "  status='approved' — DEFAULT for almost everything, including "
+            "browser-rendered pages, canvas/WebGL, game UIs, CSS/layout. "
+            "Playwright is enabled for this project: the Reviewer agent has "
+            "a playwright_check tool that loads URLs in a real headless "
+            "browser, captures console errors, and inspects the DOM. They "
+            "verify visual output the same way they verify backend output — "
+            "by actually exercising it. Your job is to ship and let them "
+            "verify. In `summary`, name the URL the Reviewer should load "
+            "and the specific behaviors to verify.\n\n"
+            "  status='needs_user_review' — REJECTED for ordinary UI tasks "
+            "on this project. Reserved for the narrow set of things even a "
+            "headless browser can't verify: audio quality, subjective "
+            "aesthetic judgment (\"does this feel right\"). Form "
+            "interactions, click sequences, page renders, and \"verify N "
+            "things on a page\" are all things the Reviewer handles via "
+            "playwright_check — do NOT escalate those to the user. If you "
+            "try, the tool returns an error telling you to use approved.\n\n"
+            "  status='needs_rework' — you found a gap in your own work and "
+            "want another pass. Provide `rework_notes`.\n\n"
+            "  status='blocked' — cannot proceed as specified; the plan or "
+            "task is wrong. Provide `block_reason`.\n\n"
+            "After calling, STOP. Do not make more tool calls."
+        )
+    else:
+        signal_outcome_description = (
+            "End the task with an outcome. REQUIRED: call this exactly once when "
+            "you're done.\n\n"
+            "  status='approved' — for backend logic, APIs, data processing, "
+            "pure functions, CLI tools, infrastructure — anything verifiable by "
+            "running a command and checking output. The Reviewer agent runs after "
+            "you and verifies acceptance criteria using shell, file reads, and "
+            "HTTP — they're the safety net for command-checkable work. "
+            "Provide `summary`.\n\n"
+            "  status='needs_user_review' — REQUIRED when the task involves a "
+            "browser-rendered page, canvas/WebGL output, game UI, desktop GUI, "
+            "CSS/layout work, or anything where the acceptance criterion is "
+            "essentially 'open it and see if it looks right.' The Reviewer agent "
+            "CANNOT open a browser or see a screen — tests passing on the JS "
+            "layer does not prove the rendered output works (a Three.js scene "
+            "can have green tests and ship a black screen). Don't let passing "
+            "tests fool you into approving render-dependent work. "
+            "Provide `summary`, `review_checklist` (concrete user steps like "
+            "'open dist/index.html, click Start, verify the cockpit appears'), "
+            "and `review_run_command` (exact copy-paste launch command).\n\n"
+            "  status='needs_rework' — you found a gap in your own work and want "
+            "another pass. Provide `rework_notes`.\n\n"
+            "  status='blocked' — cannot proceed as specified; the plan or task is "
+            "wrong. Provide `block_reason`.\n\n"
+            "After calling, STOP. Do not make more tool calls."
         )
 
     return [
@@ -654,32 +765,7 @@ def build_coder_tools(
         ),
         ToolSpec(
             name="signal_outcome",
-            description=(
-                "End the task with an outcome. REQUIRED: call this exactly once when "
-                "you're done.\n\n"
-                "  status='approved' — for backend logic, APIs, data processing, "
-                "pure functions, CLI tools, infrastructure — anything verifiable by "
-                "running a command and checking output. The Reviewer agent runs after "
-                "you and verifies acceptance criteria using shell, file reads, and "
-                "HTTP — they're the safety net for command-checkable work. "
-                "Provide `summary`.\n\n"
-                "  status='needs_user_review' — REQUIRED when the task involves a "
-                "browser-rendered page, canvas/WebGL output, game UI, desktop GUI, "
-                "CSS/layout work, or anything where the acceptance criterion is "
-                "essentially 'open it and see if it looks right.' The Reviewer agent "
-                "CANNOT open a browser or see a screen — tests passing on the JS "
-                "layer does not prove the rendered output works (a Three.js scene "
-                "can have green tests and ship a black screen). Don't let passing "
-                "tests fool you into approving render-dependent work. "
-                "Provide `summary`, `review_checklist` (concrete user steps like "
-                "'open dist/index.html, click Start, verify the cockpit appears'), "
-                "and `review_run_command` (exact copy-paste launch command).\n\n"
-                "  status='needs_rework' — you found a gap in your own work and want "
-                "another pass. Provide `rework_notes`.\n\n"
-                "  status='blocked' — cannot proceed as specified; the plan or task is "
-                "wrong. Provide `block_reason`.\n\n"
-                "After calling, STOP. Do not make more tool calls."
-            ),
+            description=signal_outcome_description,
             input_schema={
                 "type": "object",
                 "properties": {

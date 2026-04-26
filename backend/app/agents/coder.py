@@ -65,11 +65,18 @@ class Coder:
         def _receiver(outcome: TaskOutcome) -> None:
             signaled["outcome"] = outcome
 
+        # Read playwright_enabled up front so signal_outcome can enforce its
+        # routing gate. Tool list is fixed for the entire task run, so reading
+        # this once is fine; if the user toggles Playwright mid-task (rare),
+        # the change takes effect on the next task instead of mid-iteration.
+        playwright_enabled = bool(ctx.store.read_meta().playwright_enabled)
+
         tools = build_coder_tools(
             store=ctx.store,
             sandbox=ctx.sandbox,
             task=ctx.task,
             outcome_receiver=_receiver,
+            playwright_enabled=playwright_enabled,
         )
 
         # Build the user message telling the Coder what task to work on

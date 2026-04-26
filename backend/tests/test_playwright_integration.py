@@ -239,3 +239,117 @@ def test_coder_prompt_routes_visual_tasks_to_reviewer_when_playwright_on() -> No
     # off-branch as the rationale for escalation. (In on-branch, the
     # Reviewer's prompt carries this warning instead.)
     assert "green tests" in off or "black screen" in off
+
+
+def test_signal_outcome_rejects_needs_user_review_when_playwright_on() -> None:
+    """Runtime gate (not just prompt): when Playwright is on, the Coder
+    cannot use needs_user_review for ordinary UI tasks — the tool itself
+    rejects with a clear error. This is the enforceable backstop for when
+    the prompt-level guidance isn't enough (which we've seen happen).
+    """
+    import tempfile as _tempfile
+    import asyncio as _asyncio
+    from app.tools.coder_tools import build_coder_tools
+    from app.sandbox import ProcessSandboxExecutor
+    from app.orchestrator.task_runner import TaskOutcome
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        store = ProjectStore(tmp)
+        store.init(project_id="p1", name="t")
+        sandbox = ProcessSandboxExecutor(project_root=Path(tmp))
+        task = {
+            "id": "P1-T1",
+            "phase": "P1",
+            "title": "Build watchlist page",
+            "description": "x",
+            "acceptance_criteria": ["page renders"],
+        }
+        outcomes: list[TaskOutcome] = []
+        receiver = lambda o: outcomes.append(o)  # noqa: E731
+
+        # With Playwright ON: needs_user_review should be rejected
+        tools_on = build_coder_tools(
+            store=store,
+            sandbox=sandbox,
+            task=task,
+            outcome_receiver=receiver,
+            playwright_enabled=True,
+        )
+        signal_outcome_on = next(t for t in tools_on if t.name == "signal_outcome")
+        result = _asyncio.run(
+            signal_outcome_on.executor(
+                {
+                    "status": "needs_user_review",
+                    "summary": "page is built",
+                    "review_checklist": ["open the page", "click add"],
+                    "review_run_command": "npm run dev",
+                }
+            )
+        )
+        assert result.is_error, "needs_user_review should be rejected when Playwright on"
+        assert "REJECTED" in result.content
+        assert "playwright_check" in result.content
+        assert "approved" in result.content.lower()
+        # Outcome receiver must NOT have been called — the rejection is a
+        # tool error, not a successful outcome that just got suppressed.
+        assert outcomes == []
+
+    # With Playwright OFF: needs_user_review should work as before
+    with _tempfile.TemporaryDirectory() as tmp:
+        store = ProjectStore(tmp)
+        store.init(project_id="p2", name="t2")
+        sandbox = ProcessSandboxExecutor(project_root=Path(tmp))
+        outcomes2: list[TaskOutcome] = []
+        receiver2 = lambda o: outcomes2.append(o)  # noqa: E731
+
+        tools_off = build_coder_tools(
+            store=store,
+            sandbox=sandbox,
+            task=task,
+            outcome_receiver=receiver2,
+            playwright_enabled=False,
+        )
+        signal_outcome_off = next(t for t in tools_off if t.name == "signal_outcome")
+        result = _asyncio.run(
+            signal_outcome_off.executor(
+                {
+                    "status": "needs_user_review",
+                    "summary": "page is built",
+                    "review_checklist": ["open the page", "click add"],
+                    "review_run_command": "npm run dev",
+                }
+            )
+        )
+        assert not result.is_error, "needs_user_review should succeed when Playwright off"
+        assert len(outcomes2) == 1
+        assert outcomes2[0].kind.value == "needs_user_review"
+
+
+def test_signal_outcome_description_changes_with_playwright_flag() -> None:
+    """The tool description must agree with the runtime gate. When Playwright
+    is on, the description should say needs_user_review is rejected for UI
+    tasks. When off, the legacy description (escalate UI to user) applies.
+    Mismatch between description and gate would cause the Coder to attempt
+    the wrong path and get a surprise rejection at the end of a task."""
+    import tempfile as _tempfile
+    from app.tools.coder_tools import build_coder_tools
+    from app.sandbox import ProcessSandboxExecutor
+    from app.orchestrator.task_runner import TaskOutcome
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        store = ProjectStore(tmp)
+        store.init(project_id="p1", name="t")
+        sandbox = ProcessSandboxExecutor(project_root=Path(tmp))
+        task = {"id": "P1-T1", "phase": "P1", "title": "x", "description": "x", "acceptance_criteria": []}
+        receiver = lambda _: None  # noqa: E731
+
+        on_tools = build_coder_tools(store, sandbox, task, outcome_receiver=receiver, playwright_enabled=True)
+        off_tools = build_coder_tools(store, sandbox, task, outcome_receiver=receiver, playwright_enabled=False)
+
+        on_signal = next(t for t in on_tools if t.name == "signal_outcome")
+        off_signal = next(t for t in off_tools if t.name == "signal_outcome")
+
+        assert "REJECTED" in on_signal.description
+        assert "playwright_check" in on_signal.description
+        assert "REJECTED" not in off_signal.description
+        assert "REQUIRED when the task involves a browser-rendered" in off_signal.description
