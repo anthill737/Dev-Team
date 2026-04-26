@@ -84,6 +84,10 @@ export interface ProjectDetail extends ProjectSummary {
   // conditionally show "Resume phases" — visible only when there are
   // unfinished plan phases.
   unresolved_phase_ids: string[];
+  // Browser-based runtime verification toggle. When true, the Reviewer uses
+  // playwright_check for browser-rendered artifacts. UI surfaces this as a
+  // status indicator and a checkbox in CreateProject + EditProject modals.
+  playwright_enabled: boolean;
 }
 
 export interface Task {

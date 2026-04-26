@@ -366,6 +366,8 @@ export function EditProjectModal({
   const [modelDispatcher, setModelDispatcher] = useState<string>("default");
   const [modelCoder, setModelCoder] = useState<string>("default");
   const [modelReviewer, setModelReviewer] = useState<string>("default");
+  // Browser-based runtime verification toggle. Hydrated from detail on load.
+  const [playwrightEnabled, setPlaywrightEnabled] = useState(false);
   // Catalog loaded from backend so dropdowns show valid options + global
   // default labels. Null until first fetch resolves.
   const [catalog, setCatalog] = useState<{
@@ -412,6 +414,7 @@ export function EditProjectModal({
         setModelDispatcher(detail.override_model_dispatcher ?? "default");
         setModelCoder(detail.override_model_coder ?? "default");
         setModelReviewer(detail.override_model_reviewer ?? "default");
+        setPlaywrightEnabled(Boolean(detail.playwright_enabled));
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       } finally {
@@ -460,6 +463,9 @@ export function EditProjectModal({
       args.model_dispatcher = modelDispatcher;
       args.model_coder = modelCoder;
       args.model_reviewer = modelReviewer;
+      // Browser-verification toggle. Always send so the on-disk state matches
+      // the checkbox state the user sees, even if they didn't touch it.
+      args.playwright_enabled = playwrightEnabled;
 
       await updateProject(project.id, args);
 
@@ -629,6 +635,34 @@ export function EditProjectModal({
                 onReviewer={setModelReviewer}
               />
             )}
+
+            <div className="mb-4">
+              <label className="flex items-start gap-2 cursor-pointer text-[17px]">
+                <input
+                  type="checkbox"
+                  checked={playwrightEnabled}
+                  onChange={(e) => setPlaywrightEnabled(e.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-medium">
+                    Enable browser-based verification (Playwright)
+                  </span>
+                  <span className="block text-[15px] text-gray-400 mt-0.5">
+                    Lets the Reviewer actually open browser pages and check
+                    that they render — catches the &ldquo;tests pass, screen
+                    is black&rdquo; failure mode for web/canvas/UI projects.
+                    Requires Playwright + Chromium installed on the host
+                    (~150&nbsp;MB, one-time:{" "}
+                    <code className="text-[14px] bg-ink/60 px-1 rounded">
+                      pip install playwright &amp;&amp; playwright install chromium
+                    </code>
+                    ). Off by default. Reviewer reads this on every review,
+                    so toggling mid-project takes effect on the next review.
+                  </span>
+                </span>
+              </label>
+            </div>
           </>
         )}
 
@@ -684,6 +718,9 @@ function CreateProjectModal({
   const [modelDispatcher, setModelDispatcher] = useState<string>("default");
   const [modelCoder, setModelCoder] = useState<string>("default");
   const [modelReviewer, setModelReviewer] = useState<string>("default");
+  // Browser-based runtime verification toggle. Off by default — opting in
+  // is explicit because it requires a one-time Playwright install on the host.
+  const [playwrightEnabled, setPlaywrightEnabled] = useState(false);
   const [catalog, setCatalog] = useState<{
     choices: { string: string; label: string; cost_hint: string }[];
     defaults: { architect: string; dispatcher: string; coder: string; reviewer: string };
@@ -741,6 +778,7 @@ function CreateProjectModal({
         ...(modelDispatcher !== "default" ? { model_dispatcher: modelDispatcher } : {}),
         ...(modelCoder !== "default" ? { model_coder: modelCoder } : {}),
         ...(modelReviewer !== "default" ? { model_reviewer: modelReviewer } : {}),
+        playwright_enabled: playwrightEnabled,
       });
       onCreated(project.id);
     } catch (e) {
@@ -859,6 +897,33 @@ function CreateProjectModal({
             onReviewer={setModelReviewer}
           />
         )}
+
+        <div className="mb-4">
+          <label className="flex items-start gap-2 cursor-pointer text-[17px]">
+            <input
+              type="checkbox"
+              checked={playwrightEnabled}
+              onChange={(e) => setPlaywrightEnabled(e.target.checked)}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium">
+                Enable browser-based verification (Playwright)
+              </span>
+              <span className="block text-[15px] text-gray-400 mt-0.5">
+                Lets the Reviewer actually open browser pages and check that
+                they render — catches the &ldquo;tests pass, screen is
+                black&rdquo; failure mode for web/canvas/UI projects.
+                Requires Playwright + Chromium installed on the host
+                (~150&nbsp;MB, one-time:{" "}
+                <code className="text-[14px] bg-ink/60 px-1 rounded">
+                  pip install playwright &amp;&amp; playwright install chromium
+                </code>
+                ). Off by default; can be toggled later in project settings.
+              </span>
+            </span>
+          </label>
+        </div>
 
         {error && (
           <div className="mb-4 text-[17px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">

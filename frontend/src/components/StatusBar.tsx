@@ -215,6 +215,19 @@ export function StatusBar({
               : `Resume phases (${project.unresolved_phase_ids.join(", ")})`}
           </button>
         )}
+      {project?.playwright_enabled && (
+        // Visible whenever Playwright runtime verification is on for this
+        // project. Quiet by design — it's a status indicator, not an action.
+        // Tooltip explains exactly what's enabled so the user doesn't have
+        // to dig into project settings to remember.
+        <div
+          className="shrink-0 px-2 py-1 text-[14px] text-emerald-300 bg-emerald-950/40 border border-emerald-900/40 rounded inline-flex items-center gap-1"
+          title="Playwright runtime verification is enabled for this project. The Reviewer will use a real headless browser to verify any browser-rendered artifacts (web pages, canvas games, UIs). Toggle in project settings."
+        >
+          <span aria-hidden="true">🎭</span>
+          <span>Playwright</span>
+        </div>
+      )}
       {onOpenIn && (
         <>
           {/* Quick launchers — always visible in the workspace so the user can

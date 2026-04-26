@@ -630,8 +630,71 @@ def coder_prompt(user_platform: str = "linux") -> str:
     return _assemble(body)
 
 
-def reviewer_prompt(user_platform: str = "linux") -> str:
+def reviewer_prompt(
+    user_platform: str = "linux",
+    playwright_enabled: bool = False,
+) -> str:
+    """Build the Reviewer system prompt for the current project context.
+
+    Two flags controlling the rendered text:
+      - user_platform: shapes the platform-hints block ({PLATFORM_HINTS_SHORT}).
+      - playwright_enabled: prepends a "Step 0: browser verification mode"
+        block that tells the Reviewer which Rule 3 verification path to take.
+        When True, Playwright is available and is the required path for
+        browser-rendered artifacts. When False, fall back to bash/node smoke
+        checks. Both modes still apply Rule 3 — the difference is only in
+        the verification *technique*, not whether to verify at all.
+    """
     body = _REVIEWER_BODY.replace(
         "{PLATFORM_HINTS_SHORT}", _platform_hints_short(user_platform)
     )
-    return _assemble(body)
+
+    # Step 0 block — placed at the very top so the model reads it before
+    # anything else and has the context for the rest of the prompt's Rule 3
+    # references. Phrased as a project-state declaration, not a behavioral
+    # instruction; the rest of the prompt already contains the behavior.
+    if playwright_enabled:
+        step_zero = (
+            "STEP 0: BROWSER VERIFICATION MODE — Playwright is ENABLED for "
+            "this project.\n\n"
+            "You have a `playwright_check` tool that loads URLs in a real "
+            "headless Chromium browser and reports what actually rendered. "
+            "For ANY task whose acceptance criteria involve a browser-rendered "
+            "artifact (a webpage, a Three.js scene, a React UI, a canvas game, "
+            "an HTML form), Rule 3's runtime verification MUST use this tool. "
+            "Do not substitute a node-side smoke check or 'I read the bundle "
+            "and it parses' for actual browser rendering — that's exactly the "
+            "loophole that ships black screens.\n\n"
+            "Use it like: identify the URL the artifact lives at (typically "
+            "file://<project>/dist/index.html or http://localhost:PORT after "
+            "the Coder starts a dev server), call playwright_check with that "
+            "URL, then read the result. Any console error, page error, empty "
+            "body when the page should have content, or wrong title is a "
+            "defect — apply Rule 1 and reject.\n\n"
+            "If playwright_check returns 'playwright_not_installed', that's "
+            "an environment issue, not a code defect — surface it in your "
+            "review (request_changes with a finding noting the env problem) "
+            "and the user will install Playwright before retrying.\n\n"
+            "---\n\n"
+        )
+    else:
+        step_zero = (
+            "STEP 0: BROWSER VERIFICATION MODE — Playwright is DISABLED for "
+            "this project.\n\n"
+            "You do NOT have a browser-driver tool. For tasks with browser-"
+            "rendered artifacts, Rule 3's runtime verification falls back to "
+            "the lighter checks available via bash: run the build and confirm "
+            "it completes without errors, then write a small Node smoke check "
+            "that loads the bundle / parses the HTML / instantiates the entry "
+            "module — anything that would fail if the bundle were broken. "
+            "This is weaker than actual browser rendering but catches a lot "
+            "(syntax errors, missing modules, broken imports). Bundle-level "
+            "checks DO NOT prove that the canvas paints or the UI is "
+            "interactive — if you have any doubt about real-world rendering, "
+            "say so explicitly in your review summary so the user knows the "
+            "limit of what was verified. They can enable Playwright in "
+            "project settings for stronger verification.\n\n"
+            "---\n\n"
+        )
+
+    return _assemble(step_zero + body)
